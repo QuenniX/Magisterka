@@ -19,3 +19,5 @@ mqtt:
   clientIdPrefix: MagisterkaBackend-
   telemetryTopic: smarthome/v1/devices/+/+/telemetry
   stateTopic: smarthome/v1/devices/+/+/state
+  cmdTopicPattern: smarthome/v1/devices/%s/%s/cmd
+

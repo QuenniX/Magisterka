@@ -32,6 +32,7 @@ public class MqttPublisher {
         WasherSimulator washer = new WasherSimulator("washer-01", 230.0);
         HeaterSimulator heater = new HeaterSimulator("heater-01", 230.0);
 
+
         // --- KOMENDY MQTT dla pralki ---
         MqttCommandSubscriber cmdSub = new MqttCommandSubscriber(client);
         String washerCmdTopic = cmdTopic(washer);
@@ -113,6 +114,7 @@ public class MqttPublisher {
         });
         publishDeviceState(publisher, stateSerializer, bulb, 0, bulb.getState().name(), null);
         publishDeviceState(publisher, stateSerializer, bulb2, 0, bulb2.getState().name(), null);
+        publishDeviceState(publisher, stateSerializer, heater, 0, "OFF", null);
 
 
 
@@ -122,7 +124,8 @@ public class MqttPublisher {
         startLoop("bulb-02", publisher, telemetryTopic(bulb2), bulb2, 1500, simStart);
         startStateLoop("plug-01", publisher, stateSerializer, plug, 3000, simStart);
         startStateLoop("fridge-01", publisher, stateSerializer, fridge, 2000, simStart, raw -> raw.equals("ON") ? "COOLING" : "IDLE");
-        startLoop("heater-01", publisher, telemetryTopic(heater), heater, 2000, simStart);
+        startStateLoop("heater-01",publisher, stateSerializer, heater, 2000, simStart, raw -> raw.equals("ON") ? "HEATING" : "OFF");
+
 
 
         Thread.currentThread().join();

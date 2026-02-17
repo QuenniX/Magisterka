@@ -1,0 +1,21 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/smarthome
+    username: smarthome
+    password: smarthome
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+mqtt:
+  broker: tcp://localhost:1883
+  clientIdPrefix: MagisterkaBackend-
+  telemetryTopic: smarthome/v1/devices/+/+/telemetry
+  stateTopic: smarthome/v1/devices/+/+/state

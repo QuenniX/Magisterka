@@ -1,0 +1,10 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: magisterka-postgres
+    environment:
+      POSTGRES_DB: smarthome
+      POSTGRES_USER: smarthome
+      POSTGRES_PASSWORD: smarthome
+    ports:
+      - "5432:5432"

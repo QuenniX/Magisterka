@@ -5,27 +5,28 @@ import pl.magisterka.model.DeviceState;
 import pl.magisterka.model.EnergyTelemetry;
 
 import java.time.Instant;
+import java.util.Random;
 
-public class BulbSimulator implements DeviceSimulator {
+public class HeaterSimulator implements DeviceSimulator {
 
     private final String deviceId;
-    private final String deviceType = "bulb";
+    private final String deviceType = "heater";
     private final double voltageV;
-    private final double basePowerW;
+    private final Random random = new Random();
 
-    private DeviceState state = DeviceState.OFF; // domyślnie OFF
+    private DeviceState state = DeviceState.OFF;
 
-    public BulbSimulator(String deviceId, double voltageV, double basePowerW) {
+    public HeaterSimulator(String deviceId, double voltageV) {
         this.deviceId = deviceId;
         this.voltageV = voltageV;
-        this.basePowerW = basePowerW;
     }
 
-    public synchronized void turnOn() {
+    // sterowanie z MQTT
+    public synchronized void startHeating() {
         state = DeviceState.ON;
     }
 
-    public synchronized void turnOff() {
+    public synchronized void stopHeating() {
         state = DeviceState.OFF;
     }
 
@@ -47,17 +48,24 @@ public class BulbSimulator implements DeviceSimulator {
     public synchronized EnergyTelemetry nextTelemetry(long simTimeMs) {
 
         double powerW;
-        DeviceMode mode;
 
         if (state == DeviceState.ON) {
-            double fluctuation = (Math.random() - 0.5) * 1.0; // +/- 0.5W
-            powerW = basePowerW + fluctuation;
-            mode = DeviceMode.NORMAL;
-        } else {
-            powerW = 0.0; // zgaszona żarówka
-            mode = DeviceMode.STANDBY;
+            // 1500–2000W + lekki szum
+            powerW = 1500 + random.nextDouble() * 500;
+            return new EnergyTelemetry(
+                    deviceId,
+                    deviceType,
+                    Instant.now(),
+                    simTimeMs,
+                    powerW,
+                    voltageV,
+                    DeviceState.ON,
+                    DeviceMode.NORMAL
+            );
         }
 
+        // OFF / standby
+        powerW = 1.0 + random.nextDouble(); // ~1–2W
         return new EnergyTelemetry(
                 deviceId,
                 deviceType,
@@ -65,8 +73,8 @@ public class BulbSimulator implements DeviceSimulator {
                 simTimeMs,
                 powerW,
                 voltageV,
-                state,
-                mode
+                DeviceState.OFF,
+                DeviceMode.STANDBY
         );
     }
 }

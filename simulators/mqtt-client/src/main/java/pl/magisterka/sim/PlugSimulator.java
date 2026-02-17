@@ -52,8 +52,9 @@ public class PlugSimulator implements DeviceSimulator {
                 simTimeMs,
                 powerW,
                 voltageV,
-                DeviceState.ON,
-                DeviceMode.NORMAL
+                state,
+                (state == DeviceState.ON ? DeviceMode.NORMAL : DeviceMode.STANDBY)
         );
+
     }
 }

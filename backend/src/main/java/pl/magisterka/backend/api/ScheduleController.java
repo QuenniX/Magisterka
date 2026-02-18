@@ -38,6 +38,7 @@ public class ScheduleController {
             throw new IllegalArgumentException("cron is required");
         }
 
+
         // walidacja cron
         try {
             CronExpression.parse(dto.cron);
@@ -45,13 +46,22 @@ public class ScheduleController {
             throw new IllegalArgumentException("Invalid cron expression");
         }
 
+        // walidacja timezone
+        String timezone = dto.timezone != null ? dto.timezone : "Europe/Warsaw";
+        try {
+            java.time.ZoneId.of(timezone);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid timezone");
+        }
+
         DeviceScheduleEntity entity = new DeviceScheduleEntity();
         entity.setDeviceId(dto.deviceId);
         entity.setDeviceType(dto.deviceType);
         entity.setCmd(dto.cmd);
         entity.setCron(dto.cron);
-        entity.setTimezone(dto.timezone != null ? dto.timezone : "Europe/Warsaw");
+        entity.setTimezone(timezone);
         entity.setEnabled(dto.enabled);
+
 
         entity = repository.save(entity);
         return toDto(entity);

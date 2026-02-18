@@ -1,11 +1,13 @@
 package pl.magisterka.backend.api;
-
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pl.magisterka.backend.api.dto.DeviceCommandDto;
 import pl.magisterka.backend.mqtt.MqttCommandPublisher;
 
+
+@CrossOrigin(origins = "http://localhost:5173")
 @RestController
 @RequestMapping("/api/devices")
 public class DeviceCommandController {

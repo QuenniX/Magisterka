@@ -3,11 +3,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   LineChart,
   Line,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
   ResponsiveContainer,
+
 } from "recharts";
 
 type TelemetryPoint = {
@@ -506,7 +509,9 @@ export default function DeviceDetailsPage() {
         <h3 style={{ marginTop: 0 }}>Energy per hour (kWh)</h3>
 
         {hourly.length === 0 ? (
-          <div style={{ opacity: 0.8 }}>Brak danych do agregacji godzinowej.</div>
+          <div style={{ opacity: 0.8 }}>
+            Brak danych do agregacji godzinowej.
+          </div>
         ) : (
           <>
             <div style={{ opacity: 0.85, marginBottom: "8px" }}>
@@ -514,24 +519,24 @@ export default function DeviceDetailsPage() {
               <b>{fmtKwh(hourlyPeak)}</b> kWh
             </div>
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
-              {hourly.map((b) => (
-                <div
-                  key={b.hourStart.getTime()}
-                  style={{
-                    border: "1px solid gray",
-                    borderRadius: "10px",
-                    padding: "8px 10px",
-                    minWidth: "120px",
-                  }}
-                >
-                  <div style={{ opacity: 0.8 }}>{b.label}</div>
-                  <div style={{ fontWeight: 700 }}>{fmtKwh(b.kwh)} kWh</div>
-                </div>
-              ))}
+            <div style={{ height: "260px" }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={hourly}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" />
+                  <YAxis tickFormatter={(v) => Number(v).toFixed(4)} />
+                  <Tooltip
+                    formatter={(value: number) =>
+                      `${Number(value).toFixed(4)} kWh`
+                    }
+                  />
+                  <Bar dataKey="kwh" fill="#60a5fa" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </>
         )}
+
       </div>
 
       <div style={{ marginTop: "10px", opacity: 0.8 }}>

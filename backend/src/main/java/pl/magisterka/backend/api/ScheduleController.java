@@ -1,9 +1,10 @@
 package pl.magisterka.backend.api;
 
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.web.bind.annotation.*;
+import pl.magisterka.backend.api.dto.ScheduleDto;
 import pl.magisterka.backend.db.DeviceScheduleEntity;
 import pl.magisterka.backend.db.DeviceScheduleRepository;
-import pl.magisterka.backend.api.dto.ScheduleDto;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -21,6 +22,29 @@ public class ScheduleController {
     @PostMapping
     public ScheduleDto create(@RequestBody ScheduleDto dto) {
 
+        if (dto == null) {
+            throw new IllegalArgumentException("Body is required");
+        }
+        if (dto.deviceId == null || dto.deviceId.isBlank()) {
+            throw new IllegalArgumentException("deviceId is required");
+        }
+        if (dto.deviceType == null || dto.deviceType.isBlank()) {
+            throw new IllegalArgumentException("deviceType is required");
+        }
+        if (dto.cmd == null) {
+            throw new IllegalArgumentException("cmd is required");
+        }
+        if (dto.cron == null || dto.cron.isBlank()) {
+            throw new IllegalArgumentException("cron is required");
+        }
+
+        // walidacja cron
+        try {
+            CronExpression.parse(dto.cron);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid cron expression");
+        }
+
         DeviceScheduleEntity entity = new DeviceScheduleEntity();
         entity.setDeviceId(dto.deviceId);
         entity.setDeviceType(dto.deviceType);
@@ -30,7 +54,6 @@ public class ScheduleController {
         entity.setEnabled(dto.enabled);
 
         entity = repository.save(entity);
-
         return toDto(entity);
     }
 
@@ -40,18 +63,6 @@ public class ScheduleController {
                 .stream()
                 .map(this::toDto)
                 .collect(Collectors.toList());
-    }
-
-    private ScheduleDto toDto(DeviceScheduleEntity e) {
-        ScheduleDto dto = new ScheduleDto();
-        dto.id = e.getId();
-        dto.deviceId = e.getDeviceId();
-        dto.deviceType = e.getDeviceType();
-        dto.cmd = e.getCmd();
-        dto.cron = e.getCron();
-        dto.timezone = e.getTimezone();
-        dto.enabled = e.isEnabled();
-        return dto;
     }
 
     @DeleteMapping("/{id}")
@@ -71,4 +82,15 @@ public class ScheduleController {
         return toDto(entity);
     }
 
+    private ScheduleDto toDto(DeviceScheduleEntity e) {
+        ScheduleDto dto = new ScheduleDto();
+        dto.id = e.getId();
+        dto.deviceId = e.getDeviceId();
+        dto.deviceType = e.getDeviceType();
+        dto.cmd = e.getCmd();
+        dto.cron = e.getCron();
+        dto.timezone = e.getTimezone();
+        dto.enabled = e.isEnabled();
+        return dto;
+    }
 }

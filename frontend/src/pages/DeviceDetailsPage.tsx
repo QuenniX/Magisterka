@@ -80,6 +80,61 @@ function safeSumEnergy(days: any): number {
   return Number(days) || 0;
 }
 
+const ACTIVE_THRESHOLD_W = 1; // startowo: 1W (możesz potem wystawić w UI)
+
+function formatDuration(totalSeconds: number) {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+
+  if (h > 0) return `${h}h ${m}m ${sec}s`;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
+function calculateRangeMetrics(points: TelemetryPoint[], thresholdW: number) {
+  if (!points || points.length < 2) {
+    return { activeSeconds: 0, averagePowerW: null as number | null };
+  }
+
+  let totalDt = 0; // ms
+  let weightedPowerSum = 0; // W*ms (trapezy)
+  let activeDt = 0; // ms
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+
+    const ta = new Date(a.ts).getTime();
+    const tb = new Date(b.ts).getTime();
+    const dt = tb - ta;
+
+    // zabezpieczenia (np. duplikaty / nieposortowane)
+    if (!Number.isFinite(dt) || dt <= 0) continue;
+
+    const pa = Number(a.powerW) || 0;
+    const pb = Number(b.powerW) || 0;
+
+    const pAvgSegment = (pa + pb) / 2;
+
+    totalDt += dt;
+    weightedPowerSum += pAvgSegment * dt;
+
+    if (pAvgSegment > thresholdW) {
+      activeDt += dt;
+    }
+  }
+
+  const averagePowerW = totalDt > 0 ? weightedPowerSum / totalDt : null;
+
+  return {
+    activeSeconds: Math.round(activeDt / 1000),
+    averagePowerW: averagePowerW === null ? null : averagePowerW,
+  };
+}
+
+
 export default function DeviceDetailsPage() {
   const navigate = useNavigate();
   const { deviceType, deviceId } = useParams();
@@ -173,21 +228,33 @@ export default function DeviceDetailsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, deviceId, range]);
 
-  const chartData = useMemo(
-    () =>
-      data.map((p) => ({
-        ts: new Date(p.ts).toLocaleTimeString(),
-        powerW: p.powerW,
-      })),
-    [data]
-  );
+    const sortedData = useMemo(() => {
+      return [...data].sort(
+        (x, y) => new Date(x.ts).getTime() - new Date(y.ts).getTime()
+      );
+    }, [data]);
 
-  const peakPower = useMemo(
-    () => data.reduce((max, p) => Math.max(max, p.powerW ?? 0), 0),
-    [data]
-  );
+    const metrics = useMemo(
+      () => calculateRangeMetrics(sortedData, ACTIVE_THRESHOLD_W),
+      [sortedData]
+    );
 
-  const last = data.length > 0 ? data[data.length - 1] : null;
+    const chartData = useMemo(
+      () =>
+        sortedData.map((p) => ({
+          ts: new Date(p.ts).toLocaleTimeString(),
+          powerW: p.powerW,
+        })),
+      [sortedData]
+    );
+
+    const peakPower = useMemo(
+      () => sortedData.reduce((max, p) => Math.max(max, p.powerW ?? 0), 0),
+      [sortedData]
+    );
+
+    const last = sortedData.length > 0 ? sortedData[sortedData.length - 1] : null;
+
 
   return (
     <div style={{ padding: "20px", fontFamily: "system-ui, sans-serif" }}>
@@ -218,16 +285,13 @@ export default function DeviceDetailsPage() {
             </>
           )}
           {" "}
+          • Avg: <b>{metrics.averagePowerW === null ? "-" : fmt(metrics.averagePowerW)}</b> W
+          {" "}
+          • Active: <b>{formatDuration(metrics.activeSeconds)}</b>
+          {" "}
           • Energy: <b>{fmtKwh(energyKwh)}</b> kWh
         </div>
-
-        {energyError && (
-          <div style={{ marginTop: "6px", opacity: 0.8 }}>
-            (Energy error: {energyError})
-          </div>
-        )}
-      </div>
-
+          </div> {/*
       {/* Controls */}
       <div
         style={{

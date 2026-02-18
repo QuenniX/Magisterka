@@ -62,6 +62,18 @@ public class ScheduleController {
         entity.setTimezone(timezone);
         entity.setEnabled(dto.enabled);
 
+        boolean exists = repository.existsByDeviceIdAndDeviceTypeAndCmdAndCronAndTimezone(
+                dto.deviceId,
+                dto.deviceType,
+                dto.cmd,
+                dto.cron,
+                timezone
+        );
+
+        if (exists) {
+            throw new IllegalArgumentException("Schedule already exists");
+        }
+
 
         entity = repository.save(entity);
         return toDto(entity);

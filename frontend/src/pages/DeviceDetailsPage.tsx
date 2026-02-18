@@ -95,11 +95,16 @@ function formatDuration(totalSeconds: number) {
 
 function calculateRangeMetrics(points: TelemetryPoint[], thresholdW: number) {
   if (!points || points.length < 2) {
-    return { activeSeconds: 0, averagePowerW: null as number | null };
+    return {
+      activeSeconds: 0,
+      totalSeconds: 0,
+      activePct: null as number | null,
+      averagePowerW: null as number | null,
+    };
   }
 
   let totalDt = 0; // ms
-  let weightedPowerSum = 0; // W*ms (trapezy)
+  let weightedPowerSum = 0; // W*ms
   let activeDt = 0; // ms
 
   for (let i = 0; i < points.length - 1; i++) {
@@ -110,7 +115,6 @@ function calculateRangeMetrics(points: TelemetryPoint[], thresholdW: number) {
     const tb = new Date(b.ts).getTime();
     const dt = tb - ta;
 
-    // zabezpieczenia (np. duplikaty / nieposortowane)
     if (!Number.isFinite(dt) || dt <= 0) continue;
 
     const pa = Number(a.powerW) || 0;
@@ -128,11 +132,93 @@ function calculateRangeMetrics(points: TelemetryPoint[], thresholdW: number) {
 
   const averagePowerW = totalDt > 0 ? weightedPowerSum / totalDt : null;
 
+  const totalSeconds = Math.round(totalDt / 1000);
+  const activeSeconds = Math.round(activeDt / 1000);
+  const activePct =
+    totalDt > 0 ? (activeDt / totalDt) * 100 : null;
+
   return {
-    activeSeconds: Math.round(activeDt / 1000),
-    averagePowerW: averagePowerW === null ? null : averagePowerW,
+    activeSeconds,
+    totalSeconds,
+    activePct,
+    averagePowerW,
   };
 }
+type HourBucket = {
+  hourStart: Date;   // początek godziny (lokalny)
+  label: string;     // np. "17:00"
+  kwh: number;       // energia w tej godzinie
+};
+
+function startOfHour(d: Date) {
+  const x = new Date(d);
+  x.setMinutes(0, 0, 0);
+  return x;
+}
+
+function addHours(d: Date, h: number) {
+  const x = new Date(d);
+  x.setHours(x.getHours() + h);
+  return x;
+}
+
+/**
+ * Agreguje energię (kWh) do kubełków godzinowych.
+ * Liczymy trapezami między kolejnymi próbkami i rozdzielamy segmenty na godziny, jeśli przecinają granice.
+ */
+function energyPerHour(points: TelemetryPoint[]): HourBucket[] {
+  if (!points || points.length < 2) return [];
+
+  // map: epochMs(hourStart) -> kWh
+  const buckets = new Map<number, number>();
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+
+    const t0 = new Date(a.ts).getTime();
+    const t1 = new Date(b.ts).getTime();
+    const dt = t1 - t0;
+    if (!Number.isFinite(dt) || dt <= 0) continue;
+
+    const p0 = Number(a.powerW) || 0;
+    const p1 = Number(b.powerW) || 0;
+    const pAvg = (p0 + p1) / 2; // W
+
+    // segment [t0, t1] może przeciąć granice godzin — dzielimy
+    let segStart = new Date(t0);
+    const segEnd = new Date(t1);
+
+    while (segStart < segEnd) {
+      const hourStart = startOfHour(segStart);
+      const nextHour = addHours(hourStart, 1);
+
+      const chunkEnd = segEnd < nextHour ? segEnd : nextHour;
+      const chunkMs = chunkEnd.getTime() - segStart.getTime();
+      if (chunkMs <= 0) break;
+
+      // energia = Pavg[W] * time[h] -> Wh -> kWh
+      const chunkHours = chunkMs / 3600000;
+      const chunkKwh = (pAvg * chunkHours) / 1000;
+
+      const key = hourStart.getTime();
+      buckets.set(key, (buckets.get(key) ?? 0) + chunkKwh);
+
+      segStart = chunkEnd;
+    }
+  }
+
+  const result = [...buckets.entries()]
+    .sort((x, y) => x[0] - y[0])
+    .map(([ms, kwh]) => {
+      const d = new Date(ms);
+      const label = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      return { hourStart: d, label, kwh };
+    });
+
+  return result;
+}
+
 
 
 export default function DeviceDetailsPage() {
@@ -147,6 +233,8 @@ export default function DeviceDetailsPage() {
 
   const [energyKwh, setEnergyKwh] = useState<number | null>(null);
   const [energyError, setEnergyError] = useState<string | null>(null);
+  const fmtPct = (n: number | null) =>
+    n === null ? "-" : Number.isFinite(n) ? `${n.toFixed(1)}%` : "-";
 
   const fmt = (n: number) => (Number.isFinite(n) ? n.toFixed(2) : "-");
   const fmtKwh = (n: number | null) =>
@@ -255,6 +343,18 @@ export default function DeviceDetailsPage() {
 
     const last = sortedData.length > 0 ? sortedData[sortedData.length - 1] : null;
 
+    const hourly = useMemo(() => energyPerHour(sortedData), [sortedData]);
+
+    const hourlyTotal = useMemo(
+      () => hourly.reduce((sum, b) => sum + (b.kwh || 0), 0),
+      [hourly]
+    );
+
+    const hourlyPeak = useMemo(
+      () => hourly.reduce((max, b) => Math.max(max, b.kwh || 0), 0),
+      [hourly]
+    );
+
 
   return (
     <div style={{ padding: "20px", fontFamily: "system-ui, sans-serif" }}>
@@ -288,6 +388,8 @@ export default function DeviceDetailsPage() {
           • Avg: <b>{metrics.averagePowerW === null ? "-" : fmt(metrics.averagePowerW)}</b> W
           {" "}
           • Active: <b>{formatDuration(metrics.activeSeconds)}</b>
+          {" "}
+          (<b>{fmtPct(metrics.activePct)}</b>)
           {" "}
           • Energy: <b>{fmtKwh(energyKwh)}</b> kWh
         </div>
@@ -390,6 +492,45 @@ export default function DeviceDetailsPage() {
               <Line type="monotone" dataKey="powerW" dot={false} />
             </LineChart>
           </ResponsiveContainer>
+        )}
+      </div>
+      <div
+        style={{
+          marginTop: "25px",
+          border: "1px solid gray",
+          borderRadius: "10px",
+          padding: "12px",
+          maxWidth: "1000px",
+        }}
+      >
+        <h3 style={{ marginTop: 0 }}>Energy per hour (kWh)</h3>
+
+        {hourly.length === 0 ? (
+          <div style={{ opacity: 0.8 }}>Brak danych do agregacji godzinowej.</div>
+        ) : (
+          <>
+            <div style={{ opacity: 0.85, marginBottom: "8px" }}>
+              Total (from buckets): <b>{fmtKwh(hourlyTotal)}</b> kWh • Peak hour:{" "}
+              <b>{fmtKwh(hourlyPeak)}</b> kWh
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
+              {hourly.map((b) => (
+                <div
+                  key={b.hourStart.getTime()}
+                  style={{
+                    border: "1px solid gray",
+                    borderRadius: "10px",
+                    padding: "8px 10px",
+                    minWidth: "120px",
+                  }}
+                >
+                  <div style={{ opacity: 0.8 }}>{b.label}</div>
+                  <div style={{ fontWeight: 700 }}>{fmtKwh(b.kwh)} kWh</div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
 

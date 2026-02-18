@@ -1,5 +1,7 @@
 package pl.magisterka.backend.api.dto;
 
+import pl.magisterka.backend.model.CommandType;
+
 public class DeviceCommandDto {
-    public String cmd; // "START" / "STOP"
+    public CommandType cmd;
 }

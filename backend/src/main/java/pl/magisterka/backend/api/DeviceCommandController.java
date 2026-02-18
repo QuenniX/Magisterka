@@ -23,12 +23,12 @@ public class DeviceCommandController {
             @RequestBody DeviceCommandDto body
     ) throws MqttException {
 
-        String cmd = body == null ? null : body.cmd;
-        if (cmd == null || (!cmd.equalsIgnoreCase("START") && !cmd.equalsIgnoreCase("STOP"))) {
-            return ResponseEntity.badRequest().body("cmd must be START or STOP");
+        if (body == null || body.cmd == null) {
+            return ResponseEntity.badRequest().body("cmd must be provided");
         }
 
-        publisher.publishCommand(deviceType, deviceId, cmd.toUpperCase());
+        publisher.publishCommand(deviceType, deviceId, body.cmd);
+
         return ResponseEntity.ok().build();
     }
 }

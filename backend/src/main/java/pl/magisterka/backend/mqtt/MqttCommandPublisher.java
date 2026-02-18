@@ -4,6 +4,7 @@ import org.eclipse.paho.client.mqttv3.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import pl.magisterka.backend.model.CommandType;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
@@ -32,9 +33,10 @@ public class MqttCommandPublisher {
         log.info("MQTT(cmd) connected to {}", props.getBroker());
     }
 
-    public void publishCommand(String deviceType, String deviceId, String cmd) throws MqttException {
+    public void publishCommand(String deviceType, String deviceId, CommandType cmd)
+    throws MqttException {
         String topic = String.format("smarthome/v1/devices/%s/%s/cmd", deviceType, deviceId);
-        String payload = "{\"cmd\":\"" + cmd + "\"}";
+        String payload = "{\"cmd\":\"" + cmd.name() + "\"}";
 
         MqttMessage msg = new MqttMessage(payload.getBytes(StandardCharsets.UTF_8));
         msg.setQos(1);

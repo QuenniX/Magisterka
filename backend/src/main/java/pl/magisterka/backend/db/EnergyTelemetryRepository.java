@@ -20,4 +20,6 @@ public interface EnergyTelemetryRepository extends JpaRepository<EnergyTelemetry
 
     List<EnergyTelemetryEntity>
     findByDeviceIdAndTsBetweenOrderByTsAsc(String deviceId, Instant from, Instant to);
+    List<EnergyTelemetryEntity> findByTsBetweenOrderByDeviceIdAscTsAsc(Instant from, Instant to);
+
 }

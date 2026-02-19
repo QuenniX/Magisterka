@@ -396,7 +396,23 @@ export default function DeviceDetailsPage() {
           {" "}
           • Energy: <b>{fmtKwh(energyKwh)}</b> kWh
         </div>
-          </div> {/*
+          </div>
+        <button
+          onClick={() => navigate(`/devices/${deviceType}/${deviceId}/compare`)}
+          style={{
+            marginTop: "10px",
+            padding: "8px 12px",
+            borderRadius: "8px",
+            border: "1px solid gray",
+            cursor: "pointer",
+          }}
+        >
+          Compare ranges
+        </button>
+
+
+
+
       {/* Controls */}
       <div
         style={{

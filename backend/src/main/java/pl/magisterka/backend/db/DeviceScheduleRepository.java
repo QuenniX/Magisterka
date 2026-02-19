@@ -12,7 +12,14 @@ public interface DeviceScheduleRepository extends JpaRepository<DeviceScheduleEn
             pl.magisterka.backend.model.CommandType cmd,
             String cron,
             String timezone
-    );
 
+    );
+    void deleteByWindowId(String windowId);
+    List<DeviceScheduleEntity> findByWindowId(String windowId);
+
+    List<DeviceScheduleEntity> findByOneShotId(String oneShotId);
+    void deleteByOneShotId(String oneShotId);
+
+    List<DeviceScheduleEntity> findByScenarioId(String scenarioId);
 }
 

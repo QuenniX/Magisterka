@@ -11,6 +11,25 @@ public class DeviceScheduleEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "window_id", length = 64)
+    private String windowId;
+
+    public String getWindowId() { return windowId; }
+    public void setWindowId(String windowId) { this.windowId = windowId; }
+
+    @Column(name = "one_shot_id", length = 64)
+    private String oneShotId;
+
+    public String getOneShotId() { return oneShotId; }
+    public void setOneShotId(String oneShotId) { this.oneShotId = oneShotId; }
+
+    @Column(name = "scenario_id", length = 64)
+    private String scenarioId;
+
+    public String getScenarioId() { return scenarioId; }
+    public void setScenarioId(String scenarioId) { this.scenarioId = scenarioId; }
+
+
     @Column(name = "device_id", nullable = false, length = 64)
     private String deviceId;
 

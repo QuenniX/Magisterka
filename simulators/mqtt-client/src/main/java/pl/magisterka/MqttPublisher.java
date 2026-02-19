@@ -1,19 +1,22 @@
 package pl.magisterka;
 
 import org.eclipse.paho.client.mqttv3.MqttClient;
+import org.eclipse.paho.client.mqttv3.MqttException;
 import pl.magisterka.json.DeviceStateJsonSerializer;
 import pl.magisterka.model.DeviceCommand;
 import pl.magisterka.model.DeviceStateMessage;
 import pl.magisterka.mqtt.MqttCommandSubscriber;
 import pl.magisterka.mqtt.MqttTelemetryPublisher;
 import pl.magisterka.sim.*;
+
 import java.util.function.Function;
 import java.time.Instant;
 
 public class MqttPublisher {
 
     public static void main(String[] args) throws Exception {
-        long simStart = System.currentTimeMillis();
+        long simStartReal = System.currentTimeMillis();
+        long speedFactor = 600; // 1s real = 10 min symulacji
 
         String broker = "tcp://localhost:1883";
         // mały trik: unikasz konfliktu clientId jak odpalisz 2 razy
@@ -32,103 +35,111 @@ public class MqttPublisher {
         WasherSimulator washer = new WasherSimulator("washer-01", 230.0);
         HeaterSimulator heater = new HeaterSimulator("heater-01", 230.0);
 
-
-        // --- KOMENDY MQTT dla pralki ---
+        // --- KOMENDY MQTT ---
         MqttCommandSubscriber cmdSub = new MqttCommandSubscriber(client);
-        String washerCmdTopic = cmdTopic(washer);
 
-        cmdSub.subscribe(washerCmdTopic, cmd -> {
-            long nowSim = System.currentTimeMillis() - simStart;
+        try {
+            // --- KOMENDY MQTT dla pralki ---
+            String washerCmdTopic = cmdTopic(washer);
+            cmdSub.subscribe(washerCmdTopic, cmd -> {
+                long nowSim = simNow(simStartReal, speedFactor);
 
-            try {
-                if (cmd == DeviceCommand.START) {
-                    washer.startCycle(nowSim);
-                    System.out.println("Washer START (simTimeMs=" + nowSim + ")");
-                    publishWasherState(publisher, stateSerializer, washer, nowSim);
-                } else if (cmd == DeviceCommand.STOP) {
-                    washer.stopCycle();
-                    System.out.println("Washer STOP (simTimeMs=" + nowSim + ")");
-                    publishWasherState(publisher, stateSerializer, washer, nowSim);
+                try {
+                    if (cmd == DeviceCommand.START) {
+                        washer.startCycle(nowSim);
+                        System.out.println("Washer START (simTimeMs=" + nowSim + ")");
+                        publishWasherState(publisher, stateSerializer, washer, nowSim);
+                    } else if (cmd == DeviceCommand.STOP) {
+                        washer.stopCycle();
+                        System.out.println("Washer STOP (simTimeMs=" + nowSim + ")");
+                        publishWasherState(publisher, stateSerializer, washer, nowSim);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-        // --- KOMENDY MQTT dla heatera ---
-        String heaterCmdTopic = cmdTopic(heater);
+            });
 
-        cmdSub.subscribe(heaterCmdTopic, cmd -> {
-            long nowSim = System.currentTimeMillis() - simStart;
+            // --- KOMENDY MQTT dla heatera ---
+            String heaterCmdTopic = cmdTopic(heater);
+            cmdSub.subscribe(heaterCmdTopic, cmd -> {
+                long nowSim = simNow(simStartReal, speedFactor);
 
-            try {
-                if (cmd == DeviceCommand.START) {
-                    heater.startHeating();
-                    System.out.println("Heater START (simTimeMs=" + nowSim + ")");
-                    publishDeviceState(publisher, stateSerializer, heater, nowSim, "HEATING", null);
-                } else if (cmd == DeviceCommand.STOP) {
-                    heater.stopHeating();
-                    System.out.println("Heater STOP (simTimeMs=" + nowSim + ")");
-                    publishDeviceState(publisher, stateSerializer, heater, nowSim, "OFF", null);
+                try {
+                    if (cmd == DeviceCommand.START) {
+                        heater.startHeating();
+                        System.out.println("Heater START (simTimeMs=" + nowSim + ")");
+                        publishDeviceState(publisher, stateSerializer, heater, nowSim, "HEATING", null);
+                    } else if (cmd == DeviceCommand.STOP) {
+                        heater.stopHeating();
+                        System.out.println("Heater STOP (simTimeMs=" + nowSim + ")");
+                        publishDeviceState(publisher, stateSerializer, heater, nowSim, "OFF", null);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
+            });
 
-        // --- KOMENDY MQTT dla bulb-01 ---
-        cmdSub.subscribe(cmdTopic(bulb), cmd -> {
-            long nowSim = System.currentTimeMillis() - simStart;
+            // --- KOMENDY MQTT dla bulb-01 ---
+            cmdSub.subscribe(cmdTopic(bulb), cmd -> {
+                long nowSim = simNow(simStartReal, speedFactor);
 
-            try {
-                if (cmd == DeviceCommand.START) {
-                    bulb.turnOn();
-                    System.out.println("Bulb-01 ON (simTimeMs=" + nowSim + ")");
-                    publishDeviceState(publisher, stateSerializer, bulb, nowSim, "ON", null);
-                } else if (cmd == DeviceCommand.STOP) {
-                    bulb.turnOff();
-                    System.out.println("Bulb-01 OFF (simTimeMs=" + nowSim + ")");
-                    publishDeviceState(publisher, stateSerializer, bulb, nowSim, "OFF", null);
+                try {
+                    if (cmd == DeviceCommand.START) {
+                        bulb.turnOn();
+                        System.out.println("Bulb-01 ON (simTimeMs=" + nowSim + ")");
+                        publishDeviceState(publisher, stateSerializer, bulb, nowSim, "ON", null);
+                    } else if (cmd == DeviceCommand.STOP) {
+                        bulb.turnOff();
+                        System.out.println("Bulb-01 OFF (simTimeMs=" + nowSim + ")");
+                        publishDeviceState(publisher, stateSerializer, bulb, nowSim, "OFF", null);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
+            });
 
-// --- KOMENDY MQTT dla bulb-02 ---
-        cmdSub.subscribe(cmdTopic(bulb2), cmd -> {
-            long nowSim = System.currentTimeMillis() - simStart;
+            // --- KOMENDY MQTT dla bulb-02 ---
+            cmdSub.subscribe(cmdTopic(bulb2), cmd -> {
+                long nowSim = simNow(simStartReal, speedFactor);
 
-            try {
-                if (cmd == DeviceCommand.START) {
-                    bulb2.turnOn();
-                    System.out.println("Bulb-02 ON (simTimeMs=" + nowSim + ")");
-                    publishDeviceState(publisher, stateSerializer, bulb2, nowSim, "ON", null);
-                } else if (cmd == DeviceCommand.STOP) {
-                    bulb2.turnOff();
-                    System.out.println("Bulb-02 OFF (simTimeMs=" + nowSim + ")");
-                    publishDeviceState(publisher, stateSerializer, bulb2, nowSim, "OFF", null);
+                try {
+                    if (cmd == DeviceCommand.START) {
+                        bulb2.turnOn();
+                        System.out.println("Bulb-02 ON (simTimeMs=" + nowSim + ")");
+                        publishDeviceState(publisher, stateSerializer, bulb2, nowSim, "ON", null);
+                    } else if (cmd == DeviceCommand.STOP) {
+                        bulb2.turnOff();
+                        System.out.println("Bulb-02 OFF (simTimeMs=" + nowSim + ")");
+                        publishDeviceState(publisher, stateSerializer, bulb2, nowSim, "OFF", null);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
+            });
+
+        } catch (MqttException e) {
+            throw new RuntimeException("Failed to subscribe to MQTT cmd topics", e);
+        }
+
         publishDeviceState(publisher, stateSerializer, bulb, 0, bulb.getState().name(), null);
         publishDeviceState(publisher, stateSerializer, bulb2, 0, bulb2.getState().name(), null);
         publishDeviceState(publisher, stateSerializer, heater, 0, "OFF", null);
 
-
-
         // --- TELEMETRIA ---
-        startWasherLoop("washer-01", publisher, stateSerializer, washer, 2000, simStart);
-        startLoop("bulb-01", publisher, telemetryTopic(bulb), bulb, 2000, simStart);
-        startLoop("bulb-02", publisher, telemetryTopic(bulb2), bulb2, 1500, simStart);
-        startStateLoop("plug-01", publisher, stateSerializer, plug, 3000, simStart);
-        startStateLoop("fridge-01", publisher, stateSerializer, fridge, 2000, simStart, raw -> raw.equals("ON") ? "COOLING" : "IDLE");
-        startStateLoop("heater-01",publisher, stateSerializer, heater, 2000, simStart, raw -> raw.equals("ON") ? "HEATING" : "OFF");
-
-
+        startWasherLoop("washer-01", publisher, stateSerializer, washer, 2000, simStartReal, speedFactor);
+        startLoop("bulb-01", publisher, telemetryTopic(bulb), bulb, 2000, simStartReal, speedFactor);
+        startLoop("bulb-02", publisher, telemetryTopic(bulb2), bulb2, 1500, simStartReal, speedFactor);
+        startStateLoop("plug-01", publisher, stateSerializer, plug, 3000, simStartReal, speedFactor);
+        startStateLoop("fridge-01", publisher, stateSerializer, fridge, 2000, simStartReal, speedFactor,
+                raw -> raw.equals("ON") ? "COOLING" : "IDLE");
+        startStateLoop("heater-01", publisher, stateSerializer, heater, 2000, simStartReal, speedFactor,
+                raw -> raw.equals("ON") ? "HEATING" : "OFF");
 
         Thread.currentThread().join();
+    }
+
+    private static long simNow(long simStartReal, long speedFactor) {
+        return (System.currentTimeMillis() - simStartReal) * speedFactor;
     }
 
     private static void publishWasherState(
@@ -144,13 +155,12 @@ public class MqttPublisher {
                 Instant.now(),
                 simTimeMs,
                 washer.getWasherState().name(),
-                washer.getCurrentPhaseName() // IDLE -> null (brak pola), RUNNING -> np. "FILL"
+                washer.getCurrentPhaseName()
         );
 
         // retained state, QoS 1
         publisher.publish(stateTopic(washer), stateSerializer.toJson(st), 1, true);
     }
-
 
     private static Thread startLoop(
             String name,
@@ -158,13 +168,14 @@ public class MqttPublisher {
             String topic,
             DeviceSimulator sim,
             long intervalMs,
-            long simStart
+            long simStartReal,
+            long speedFactor
     ) {
         Thread t = new Thread(() -> {
             long counter = 0;
             while (true) {
                 try {
-                    long simTime = System.currentTimeMillis() - simStart;
+                    long simTime = simNow(simStartReal, speedFactor);
                     publisher.publish(topic, sim.nextTelemetry(simTime));
                     counter++;
 
@@ -204,13 +215,14 @@ public class MqttPublisher {
             DeviceStateJsonSerializer stateSerializer,
             WasherSimulator washer,
             long intervalMs,
-            long simStart
+            long simStartReal,
+            long speedFactor
     ) {
         Thread t = new Thread(() -> {
             long counter = 0;
             while (true) {
                 try {
-                    long simTime = System.currentTimeMillis() - simStart;
+                    long simTime = simNow(simStartReal, speedFactor);
 
                     String before = washer.getCurrentPhaseName();
                     publisher.publish(telemetryTopic(washer), washer.nextTelemetry(simTime));
@@ -246,7 +258,7 @@ public class MqttPublisher {
             DeviceSimulator sim,
             long simTimeMs,
             String state,
-            String phase // dla fridge zawsze null
+            String phase
     ) throws Exception {
 
         DeviceStateMessage st = new DeviceStateMessage(
@@ -262,14 +274,14 @@ public class MqttPublisher {
         publisher.publish(stateTopic(sim), stateSerializer.toJson(st), 1, true);
     }
 
-
     private static Thread startStateLoop(
             String name,
             MqttTelemetryPublisher publisher,
             DeviceStateJsonSerializer stateSerializer,
             DeviceSimulator sim,
             long intervalMs,
-            long simStart,
+            long simStartReal,
+            long speedFactor,
             Function<String, String> stateMapper
     ) {
         Thread t = new Thread(() -> {
@@ -278,12 +290,12 @@ public class MqttPublisher {
 
             while (true) {
                 try {
-                    long simTime = System.currentTimeMillis() - simStart;
+                    long simTime = simNow(simStartReal, speedFactor);
 
                     var tel = sim.nextTelemetry(simTime);
                     publisher.publish(telemetryTopic(sim), tel);
 
-                    String raw = tel.getState().name();   // ON/OFF
+                    String raw = tel.getState().name();
                     String currState = stateMapper.apply(raw);
 
                     if (prevState == null || !prevState.equals(currState)) {
@@ -310,19 +322,16 @@ public class MqttPublisher {
         t.start();
         return t;
     }
+
     private static Thread startStateLoop(
             String name,
             MqttTelemetryPublisher publisher,
             DeviceStateJsonSerializer stateSerializer,
             DeviceSimulator sim,
             long intervalMs,
-            long simStart
+            long simStartReal,
+            long speedFactor
     ) {
-        return startStateLoop(name, publisher, stateSerializer, sim, intervalMs, simStart, s -> s);
+        return startStateLoop(name, publisher, stateSerializer, sim, intervalMs, simStartReal, speedFactor, s -> s);
     }
-
-
-
-
-
 }

@@ -48,4 +48,28 @@ public class ExperimentController {
     public void stop() {
         experimentService.stopActive();
     }
+
+    /**
+     * Minimalny helper do badań: uruchom eksperyment na X sekund realnego czasu.
+     * Przykład:
+     * POST /api/experiments/2/run?durationSeconds=60
+     */
+    @PostMapping("/{id}/run")
+    public ExperimentEntity run(
+            @PathVariable long id,
+            @RequestParam(defaultValue = "60") long durationSeconds
+    ) throws InterruptedException {
+
+        if (durationSeconds <= 0) {
+            throw new IllegalArgumentException("durationSeconds must be > 0");
+        }
+
+        ExperimentEntity started = experimentService.start(id);
+
+        // działa przez określony czas (real time)
+        Thread.sleep(durationSeconds * 1000L);
+
+        experimentService.stopActive();
+        return started;
+    }
 }

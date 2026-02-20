@@ -11,16 +11,16 @@ public interface DeviceStateEventRepository extends JpaRepository<DeviceStateEve
     Optional<DeviceStateEventEntity> findTopByDeviceIdOrderByTsDesc(String deviceId);
 
     @Query(value = """
+        select distinct device_id, device_type
+        from device_state_event
+        order by device_id
+    """, nativeQuery = true)
+    List<Object[]> findDistinctDevices();
+
+    @Query(value = """
         select distinct on (device_id) *
         from device_state_event
         order by device_id, ts desc
     """, nativeQuery = true)
     List<DeviceStateEventEntity> findLatestStatePerDevice();
-
-    @Query(value = """
-    select distinct device_id, device_type
-    from device_state_event
-    order by device_type, device_id
-""", nativeQuery = true)
-    List<Object[]> findDistinctDevices();
 }

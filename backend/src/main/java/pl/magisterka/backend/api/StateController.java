@@ -21,8 +21,8 @@ public class StateController {
 
     @GetMapping("/latest")
     public List<LatestStateDto> latest() {
-        List<DeviceStateEventEntity> latest = repo.findLatestStatePerDevice();
-        return latest.stream()
+        return repo.findLatestStatePerDevice()
+                .stream()
                 .map(e -> new LatestStateDto(
                         e.getDeviceId(),
                         e.getDeviceType(),

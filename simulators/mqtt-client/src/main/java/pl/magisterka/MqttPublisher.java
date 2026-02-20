@@ -9,14 +9,14 @@ import pl.magisterka.mqtt.MqttCommandSubscriber;
 import pl.magisterka.mqtt.MqttTelemetryPublisher;
 import pl.magisterka.sim.*;
 
-import java.util.function.Function;
 import java.time.Instant;
+import java.util.function.Function;
 
 public class MqttPublisher {
 
     public static void main(String[] args) throws Exception {
-        long simStartReal = System.currentTimeMillis();
         long speedFactor = 600; // 1s real = 10 min symulacji
+        SimClock clock = SimClock.start(speedFactor);
 
         String broker = "tcp://localhost:1883";
         // mały trik: unikasz konfliktu clientId jak odpalisz 2 razy
@@ -42,8 +42,7 @@ public class MqttPublisher {
             // --- KOMENDY MQTT dla pralki ---
             String washerCmdTopic = cmdTopic(washer);
             cmdSub.subscribe(washerCmdTopic, cmd -> {
-                long nowSim = simNow(simStartReal, speedFactor);
-
+                long nowSim = clock.nowMs();
                 try {
                     if (cmd == DeviceCommand.START) {
                         washer.startCycle(nowSim);
@@ -62,8 +61,7 @@ public class MqttPublisher {
             // --- KOMENDY MQTT dla heatera ---
             String heaterCmdTopic = cmdTopic(heater);
             cmdSub.subscribe(heaterCmdTopic, cmd -> {
-                long nowSim = simNow(simStartReal, speedFactor);
-
+                long nowSim = clock.nowMs();
                 try {
                     if (cmd == DeviceCommand.START) {
                         heater.startHeating();
@@ -81,8 +79,7 @@ public class MqttPublisher {
 
             // --- KOMENDY MQTT dla bulb-01 ---
             cmdSub.subscribe(cmdTopic(bulb), cmd -> {
-                long nowSim = simNow(simStartReal, speedFactor);
-
+                long nowSim = clock.nowMs();
                 try {
                     if (cmd == DeviceCommand.START) {
                         bulb.turnOn();
@@ -100,8 +97,7 @@ public class MqttPublisher {
 
             // --- KOMENDY MQTT dla bulb-02 ---
             cmdSub.subscribe(cmdTopic(bulb2), cmd -> {
-                long nowSim = simNow(simStartReal, speedFactor);
-
+                long nowSim = clock.nowMs();
                 try {
                     if (cmd == DeviceCommand.START) {
                         bulb2.turnOn();
@@ -121,25 +117,24 @@ public class MqttPublisher {
             throw new RuntimeException("Failed to subscribe to MQTT cmd topics", e);
         }
 
+        // publish initial retained states
         publishDeviceState(publisher, stateSerializer, bulb, 0, bulb.getState().name(), null);
         publishDeviceState(publisher, stateSerializer, bulb2, 0, bulb2.getState().name(), null);
         publishDeviceState(publisher, stateSerializer, heater, 0, "OFF", null);
+        publishWasherState(publisher, stateSerializer, washer, 0);
 
         // --- TELEMETRIA ---
-        startWasherLoop("washer-01", publisher, stateSerializer, washer, 2000, simStartReal, speedFactor);
-        startLoop("bulb-01", publisher, telemetryTopic(bulb), bulb, 2000, simStartReal, speedFactor);
-        startLoop("bulb-02", publisher, telemetryTopic(bulb2), bulb2, 1500, simStartReal, speedFactor);
-        startStateLoop("plug-01", publisher, stateSerializer, plug, 3000, simStartReal, speedFactor);
-        startStateLoop("fridge-01", publisher, stateSerializer, fridge, 2000, simStartReal, speedFactor,
+        startWasherLoop("washer-01", publisher, stateSerializer, washer, 2000, clock);
+        startLoop("bulb-01", publisher, telemetryTopic(bulb), bulb, 2000, clock);
+        startLoop("bulb-02", publisher, telemetryTopic(bulb2), bulb2, 1500, clock);
+
+        startStateLoop("plug-01", publisher, stateSerializer, plug, 3000, clock);
+        startStateLoop("fridge-01", publisher, stateSerializer, fridge, 2000, clock,
                 raw -> raw.equals("ON") ? "COOLING" : "IDLE");
-        startStateLoop("heater-01", publisher, stateSerializer, heater, 2000, simStartReal, speedFactor,
+        startStateLoop("heater-01", publisher, stateSerializer, heater, 2000, clock,
                 raw -> raw.equals("ON") ? "HEATING" : "OFF");
 
         Thread.currentThread().join();
-    }
-
-    private static long simNow(long simStartReal, long speedFactor) {
-        return (System.currentTimeMillis() - simStartReal) * speedFactor;
     }
 
     private static void publishWasherState(
@@ -162,20 +157,42 @@ public class MqttPublisher {
         publisher.publish(stateTopic(washer), stateSerializer.toJson(st), 1, true);
     }
 
+    private static void publishDeviceState(
+            MqttTelemetryPublisher publisher,
+            DeviceStateJsonSerializer stateSerializer,
+            DeviceSimulator sim,
+            long simTimeMs,
+            String state,
+            String phase
+    ) throws Exception {
+
+        DeviceStateMessage st = new DeviceStateMessage(
+                "smarthome.device.state.v1",
+                sim.deviceId(),
+                sim.deviceType(),
+                Instant.now(),
+                simTimeMs,
+                state,
+                phase
+        );
+
+        // retained state, QoS 1
+        publisher.publish(stateTopic(sim), stateSerializer.toJson(st), 1, true);
+    }
+
     private static Thread startLoop(
             String name,
             MqttTelemetryPublisher publisher,
             String topic,
             DeviceSimulator sim,
             long intervalMs,
-            long simStartReal,
-            long speedFactor
+            SimClock clock
     ) {
         Thread t = new Thread(() -> {
             long counter = 0;
             while (true) {
                 try {
-                    long simTime = simNow(simStartReal, speedFactor);
+                    long simTime = clock.nowMs();
                     publisher.publish(topic, sim.nextTelemetry(simTime));
                     counter++;
 
@@ -197,38 +214,29 @@ public class MqttPublisher {
         return t;
     }
 
-    private static String telemetryTopic(DeviceSimulator sim) {
-        return "smarthome/v1/devices/" + sim.deviceType() + "/" + sim.deviceId() + "/telemetry";
-    }
-
-    private static String cmdTopic(DeviceSimulator sim) {
-        return "smarthome/v1/devices/" + sim.deviceType() + "/" + sim.deviceId() + "/cmd";
-    }
-
-    private static String stateTopic(DeviceSimulator sim) {
-        return "smarthome/v1/devices/" + sim.deviceType() + "/" + sim.deviceId() + "/state";
-    }
-
     private static Thread startWasherLoop(
             String name,
             MqttTelemetryPublisher publisher,
             DeviceStateJsonSerializer stateSerializer,
             WasherSimulator washer,
             long intervalMs,
-            long simStartReal,
-            long speedFactor
+            SimClock clock
     ) {
         Thread t = new Thread(() -> {
             long counter = 0;
             while (true) {
                 try {
-                    long simTime = simNow(simStartReal, speedFactor);
+                    long simTime = clock.nowMs();
 
                     String before = washer.getCurrentPhaseName();
                     publisher.publish(telemetryTopic(washer), washer.nextTelemetry(simTime));
                     String after = washer.getCurrentPhaseName();
 
-                    if (before == null && after != null || before != null && !before.equals(after)) {
+                    boolean changed =
+                            (before == null && after != null) ||
+                                    (before != null && !before.equals(after));
+
+                    if (changed) {
                         publishWasherState(publisher, stateSerializer, washer, simTime);
                         System.out.println("Washer phase changed: " + before + " -> " + after);
                     }
@@ -252,36 +260,13 @@ public class MqttPublisher {
         return t;
     }
 
-    private static void publishDeviceState(
-            MqttTelemetryPublisher publisher,
-            DeviceStateJsonSerializer stateSerializer,
-            DeviceSimulator sim,
-            long simTimeMs,
-            String state,
-            String phase
-    ) throws Exception {
-
-        DeviceStateMessage st = new DeviceStateMessage(
-                "smarthome.device.state.v1",
-                sim.deviceId(),
-                sim.deviceType(),
-                Instant.now(),
-                simTimeMs,
-                state,
-                phase
-        );
-
-        publisher.publish(stateTopic(sim), stateSerializer.toJson(st), 1, true);
-    }
-
     private static Thread startStateLoop(
             String name,
             MqttTelemetryPublisher publisher,
             DeviceStateJsonSerializer stateSerializer,
             DeviceSimulator sim,
             long intervalMs,
-            long simStartReal,
-            long speedFactor,
+            SimClock clock,
             Function<String, String> stateMapper
     ) {
         Thread t = new Thread(() -> {
@@ -290,7 +275,7 @@ public class MqttPublisher {
 
             while (true) {
                 try {
-                    long simTime = simNow(simStartReal, speedFactor);
+                    long simTime = clock.nowMs();
 
                     var tel = sim.nextTelemetry(simTime);
                     publisher.publish(telemetryTopic(sim), tel);
@@ -329,9 +314,20 @@ public class MqttPublisher {
             DeviceStateJsonSerializer stateSerializer,
             DeviceSimulator sim,
             long intervalMs,
-            long simStartReal,
-            long speedFactor
+            SimClock clock
     ) {
-        return startStateLoop(name, publisher, stateSerializer, sim, intervalMs, simStartReal, speedFactor, s -> s);
+        return startStateLoop(name, publisher, stateSerializer, sim, intervalMs, clock, s -> s);
+    }
+
+    private static String telemetryTopic(DeviceSimulator sim) {
+        return "smarthome/v1/devices/" + sim.deviceType() + "/" + sim.deviceId() + "/telemetry";
+    }
+
+    private static String cmdTopic(DeviceSimulator sim) {
+        return "smarthome/v1/devices/" + sim.deviceType() + "/" + sim.deviceId() + "/cmd";
+    }
+
+    private static String stateTopic(DeviceSimulator sim) {
+        return "smarthome/v1/devices/" + sim.deviceType() + "/" + sim.deviceId() + "/state";
     }
 }

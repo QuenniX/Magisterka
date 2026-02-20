@@ -1,5 +1,6 @@
 package pl.magisterka.backend.db;
-
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.JoinColumn;
 import jakarta.persistence.*;
 import java.time.Instant;
 
@@ -61,4 +62,11 @@ public class EnergyTelemetryEntity {
 
     public String getMode() { return mode; }
     public void setMode(String mode) { this.mode = mode; }
+
+    @ManyToOne
+    @JoinColumn(name = "experiment_id")
+    private ExperimentEntity experiment;
+
+    public ExperimentEntity getExperiment() { return experiment; }
+    public void setExperiment(ExperimentEntity experiment) { this.experiment = experiment; }
 }

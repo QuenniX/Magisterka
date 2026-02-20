@@ -8,7 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import pl.magisterka.backend.db.EnergyTelemetryEntity;
 import pl.magisterka.backend.db.EnergyTelemetryRepository;
-
+import pl.magisterka.backend.service.ExperimentService;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
@@ -20,17 +20,19 @@ public class MqttTelemetrySubscriber {
     private final MqttProperties props;
     private final EnergyTelemetryRepository telemetryRepository;
     private final ObjectMapper objectMapper;
-
+    private final ExperimentService experimentService;
     private MqttClient client;
 
     public MqttTelemetrySubscriber(
             MqttProperties props,
             EnergyTelemetryRepository telemetryRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ExperimentService experimentService
     ) {
         this.props = props;
         this.telemetryRepository = telemetryRepository;
         this.objectMapper = objectMapper;
+        this.experimentService = experimentService;
     }
 
     @jakarta.annotation.PostConstruct
@@ -74,6 +76,10 @@ public class MqttTelemetrySubscriber {
 
                     e.setState(text(n, "state"));
                     e.setMode(text(n, "mode"));
+
+                    experimentService.getActiveExperiment()
+                            .ifPresent(e::setExperiment);
+
 
                     telemetryRepository.save(e);
 
@@ -124,4 +130,5 @@ public class MqttTelemetrySubscriber {
             log.warn("Error disconnecting MQTT: {}", e.getMessage());
         }
     }
+
 }

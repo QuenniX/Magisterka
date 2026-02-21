@@ -66,12 +66,9 @@ public class ExperimentController {
 
         ExperimentEntity started = experimentService.start(id);
 
-        // działa przez określony czas (real time)
         Thread.sleep(durationSeconds * 1000L);
 
         experimentService.stopActive();
         return started;
     }
-
-
 }

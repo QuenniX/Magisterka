@@ -16,20 +16,25 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ManualPolicyRunner {
     private static final Logger log = LoggerFactory.getLogger(ManualPolicyRunner.class);
 
+    private final SimTimeService simTimeService;
     private final MqttCommandPublisher cmdPublisher;
+
     private volatile WorkloadDto workload;
 
     public void setWorkload(WorkloadDto workload) {
         this.workload = workload;
     }
+
     private Thread worker;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-    public ManualPolicyRunner(MqttCommandPublisher cmdPublisher) {
+    public ManualPolicyRunner(MqttCommandPublisher cmdPublisher,
+                              SimTimeService simTimeService) {
         this.cmdPublisher = cmdPublisher;
+        this.simTimeService = simTimeService;
     }
 
-    /** Startuje "manual A" dla konkretnego eksperymentu. Jeśli już działa – restartuje. */
+    /** Startuje "manual" dla konkretnego eksperymentu. Jeśli już działa – restartuje. */
     public synchronized void start(ExperimentEntity experiment) {
         stop(); // bezpieczeństwo: tylko 1 runner naraz
         running.set(true);
@@ -54,18 +59,6 @@ public class ManualPolicyRunner {
     }
 
     private void runLoop(long experimentId, Random rng) {
-        // Manual A: stały plan + jitter, brak koordynacji
-        // Doba symulacyjna: 24h. Operujemy na "czasie dnia" w ms.
-        final long DAY_MS = 24L * 60 * 60 * 1000;
-
-        // Żeby było deterministycznie: generujemy plan na "dzisiejszą dobę" i wykonujemy go w pętli.
-        // Ponieważ backend nie ma SimClock, robimy plan wg CZASU RZECZYWISTEGO, ale w symulacji i tak liczy się sim_time_ms
-        // (Twoja telemetria ma sim_time_ms). To wystarczy na start.
-        //
-        // Uwaga: w kolejnym kroku podepniemy to pod SimClock / odczyt sim_time_ms z DB, żeby było 1:1 symulacyjnie.
-
-        // Prosty scheduler: co 1s real sprawdzamy czy "coś trzeba wykonać".
-        // Żeby uniknąć wielokrotnego wysyłania tej samej komendy w tej samej minucie, trzymamy flagi per "dzień".
         long currentDayIndex = -1;
 
         boolean washerDone = false;
@@ -91,12 +84,10 @@ public class ManualPolicyRunner {
 
         while (running.get()) {
             try {
-                long nowReal = System.currentTimeMillis();
-
-                // Sztucznie mapujemy "czas dnia" na realny czas: to tylko żeby mieć rytm dobowy.
-                // W kolejnym kroku zastąpimy to sim_time_ms.
-                long dayIndex = nowReal / DAY_MS;
-                long timeOfDayMs = nowReal % DAY_MS;
+                long simTime = simTimeService.getCurrentSimTimeMs(experimentId);
+                long dayIndex = simTimeService.dayIndex(simTime);
+                int minuteOfDay = simTimeService.minuteOfDay(simTime);
+                long timeOfDayMs = minuteOfDay * 60_000L;
 
                 if (dayIndex != currentDayIndex) {
                     currentDayIndex = dayIndex;
@@ -121,18 +112,18 @@ public class ManualPolicyRunner {
                     plugStartJitter = jitterMs(rng, 30);     // ±30 min
                     plugStopJitter = jitterMs(rng, 30);
 
-                    log.info("ManualPolicyRunner new day: jitters(ms) washer={} heaterStart={} heaterStop={}",
-                            washerJitter, heaterStartJitter, heaterStopJitter);
+                    log.info("ManualPolicyRunner new day(sim): dayIndex={} jitters(ms) washer={} heaterStart={} heaterStop={}",
+                            currentDayIndex, washerJitter, heaterStartJitter, heaterStopJitter);
                 }
 
-                // PLAN BAZOWY (czas dnia):
+                // WSPÓLNY PLAN (ten sam co Schedule):
                 // Washer: 18:00 start raz dziennie
                 // Heater: 17:30 start, 20:30 stop
+                // Plug-01: 16:00 start, 22:00 stop
                 // Bulb-01: 18:00 start, 23:30 stop
                 // Bulb-02: 19:00 start, 23:00 stop
-                // Plug-01: 16:00 start, 22:00 stop
                 //
-                // Manual = brak koordynacji => wszystko może się na siebie nałożyć.
+                // Manual = jitter + brak koordynacji.
 
                 // plug-01 start 16:00
                 if (!plugStarted && timeOfDayMs >= at(16, 0) + plugStartJitter) {
@@ -184,15 +175,14 @@ public class ManualPolicyRunner {
                     washerDone = true;
                 }
 
-                Thread.sleep(1000); // co 1s real
+                Thread.sleep(500); // częściej tickujemy, bo sim_time może skakać szybciej
+
             } catch (InterruptedException ie) {
-                // stop requested
                 Thread.currentThread().interrupt();
                 return;
             } catch (Exception e) {
                 log.warn("ManualPolicyRunner error: {}", e.getMessage());
-                // żeby nie zabić wątku na chwilowym błędzie mqtt:
-                try { Thread.sleep(1000); } catch (InterruptedException ignored) { return; }
+                try { Thread.sleep(500); } catch (InterruptedException ignored) { return; }
             }
         }
     }
@@ -204,8 +194,8 @@ public class ManualPolicyRunner {
 
     /** Jitter w ms: ±minutes */
     private long jitterMs(Random rng, int minutesPlusMinus) {
-        int span = minutesPlusMinus * 2 + 1; // np. 41
-        int m = rng.nextInt(span) - minutesPlusMinus; // [-20..+20]
+        int span = minutesPlusMinus * 2 + 1;
+        int m = rng.nextInt(span) - minutesPlusMinus;
         return m * 60_000L;
     }
 

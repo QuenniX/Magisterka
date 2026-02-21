@@ -16,20 +16,27 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SchedulePolicyRunner {
 
     private static final Logger log = LoggerFactory.getLogger(SchedulePolicyRunner.class);
+
+    private final MqttCommandPublisher cmdPublisher;
+    private final SimTimeService simTimeService;
+
     private volatile WorkloadDto workload;
 
     public void setWorkload(WorkloadDto workload) {
         this.workload = workload;
     }
-    private final MqttCommandPublisher cmdPublisher;
 
     private Thread worker;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
+    // Na razie nie używamy (power-limit dojdzie w kolejnym kroku)
+    @SuppressWarnings("unused")
     private static final int POWER_LIMIT_W = 2000;
 
-    public SchedulePolicyRunner(MqttCommandPublisher cmdPublisher) {
+    public SchedulePolicyRunner(MqttCommandPublisher cmdPublisher,
+                                SimTimeService simTimeService) {
         this.cmdPublisher = cmdPublisher;
+        this.simTimeService = simTimeService;
     }
 
     public synchronized void start(ExperimentEntity experiment) {
@@ -43,7 +50,7 @@ public class SchedulePolicyRunner {
         worker.setDaemon(true);
         worker.start();
 
-        log.info("SchedulePolicyRunner started for experimentId={}", experiment.getId());
+        log.info("SchedulePolicyRunner started for experimentId={} seed={}", experiment.getId(), seed);
     }
 
     public synchronized void stop() {
@@ -56,39 +63,89 @@ public class SchedulePolicyRunner {
     }
 
     private void runLoop(long experimentId, Random rng) {
+        long currentDayIndex = -1;
 
-        boolean washerStarted = false;
-        boolean heaterStarted = false;
-        boolean plugStarted = false;
+        boolean washerDone = false;
+        boolean heaterOn = false;
+        boolean plugOn = false;
+        boolean bulb1On = false;
+        boolean bulb2On = false;
 
         while (running.get()) {
             try {
+                long simTime = simTimeService.getCurrentSimTimeMs(experimentId);
+                long dayIndex = simTimeService.dayIndex(simTime);
+                int minute = simTimeService.minuteOfDay(simTime);
 
-                // 🔹 Prosta strategia: rozkładamy starty w czasie
-                if (!plugStarted) {
+                if (dayIndex != currentDayIndex) {
+                    currentDayIndex = dayIndex;
+
+                    washerDone = false;
+                    heaterOn = false;
+                    plugOn = false;
+                    bulb1On = false;
+                    bulb2On = false;
+
+                    log.info("SchedulePolicyRunner new day(sim): dayIndex={}", currentDayIndex);
+                }
+
+                // WSPÓLNY PLAN (ten sam co Manual), ale:
+                // Schedule = bez jitter, deterministycznie, "idealne wykonanie"
+
+                // plug 16:00–22:00
+                if (!plugOn && minute >= 16 * 60) {
                     publish("plug", "plug-01", CommandType.START, experimentId);
-                    plugStarted = true;
-                    Thread.sleep(3000);
+                    plugOn = true;
+                }
+                if (plugOn && minute >= 22 * 60) {
+                    publish("plug", "plug-01", CommandType.STOP, experimentId);
+                    plugOn = false;
                 }
 
-                if (!heaterStarted) {
+                // heater 17:30–20:30
+                if (!heaterOn && minute >= 17 * 60 + 30) {
                     publish("heater", "heater-01", CommandType.START, experimentId);
-                    heaterStarted = true;
-                    Thread.sleep(3000);
+                    heaterOn = true;
+                }
+                if (heaterOn && minute >= 20 * 60 + 30) {
+                    publish("heater", "heater-01", CommandType.STOP, experimentId);
+                    heaterOn = false;
                 }
 
-                if (!washerStarted) {
+                // bulb-01 18:00–23:30
+                if (!bulb1On && minute >= 18 * 60) {
+                    publish("bulb", "bulb-01", CommandType.START, experimentId);
+                    bulb1On = true;
+                }
+                if (bulb1On && minute >= 23 * 60 + 30) {
+                    publish("bulb", "bulb-01", CommandType.STOP, experimentId);
+                    bulb1On = false;
+                }
+
+                // bulb-02 19:00–23:00
+                if (!bulb2On && minute >= 19 * 60) {
+                    publish("bulb", "bulb-02", CommandType.START, experimentId);
+                    bulb2On = true;
+                }
+                if (bulb2On && minute >= 23 * 60) {
+                    publish("bulb", "bulb-02", CommandType.STOP, experimentId);
+                    bulb2On = false;
+                }
+
+                // washer start 18:00 raz dziennie
+                if (!washerDone && minute >= 18 * 60) {
                     publish("washer", "washer-01", CommandType.START, experimentId);
-                    washerStarted = true;
+                    washerDone = true;
                 }
 
-                Thread.sleep(1000);
+                Thread.sleep(500);
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
             } catch (Exception e) {
                 log.warn("SchedulePolicyRunner error: {}", e.getMessage());
+                try { Thread.sleep(500); } catch (InterruptedException ignored) { return; }
             }
         }
     }

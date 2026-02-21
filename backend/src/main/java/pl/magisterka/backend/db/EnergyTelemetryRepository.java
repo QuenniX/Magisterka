@@ -63,4 +63,25 @@ public interface EnergyTelemetryRepository extends JpaRepository<EnergyTelemetry
     where experiment_id = :experimentId
 """, nativeQuery = true)
     ExperimentStatsRow findExperimentStats(@Param("experimentId") long experimentId);
+
+    @Query(value = """
+    select coalesce(max(sim_time_ms), 0)
+    from energy_telemetry
+    where experiment_id = :experimentId
+""", nativeQuery = true)
+    long findMaxSimTimeMs(@Param("experimentId") long experimentId);
+
+
+    @Query(value = """
+    select *
+    from energy_telemetry
+    where experiment_id = :experimentId
+      and sim_time_ms between :fromSim and :toSim
+    order by device_id asc, sim_time_ms asc
+""", nativeQuery = true)
+    List<EnergyTelemetryEntity> findByExperimentIdAndSimRangeOrderByDeviceIdAscSimTimeAsc(
+            @Param("experimentId") long experimentId,
+            @Param("fromSim") long fromSim,
+            @Param("toSim") long toSim
+    );
 }

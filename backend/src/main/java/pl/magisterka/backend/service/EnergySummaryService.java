@@ -122,7 +122,7 @@ public class EnergySummaryService {
     }
 
     // ---------------------------------------
-    // NEW: EXPERIMENT (SIM TIME sim_time_ms)
+    // EXPERIMENT (SIM TIME sim_time_ms)
     // ---------------------------------------
 
     /**
@@ -133,6 +133,23 @@ public class EnergySummaryService {
         List<EnergyTelemetryEntity> rows =
                 repo.findByExperimentIdOrderByDeviceIdAscSimTimeAsc(experimentId);
 
+        return computeKwhPerDeviceFromRows(rows);
+    }
+
+    /**
+     * ✅ NOWE: Energia per device liczona tylko w zakresie sim_time_ms [fromSimMs..toSimMs]
+     * (to będzie Twoje "energy-to-achieve").
+     */
+    public Map<String, Double> computeKwhPerDeviceForExperimentBetweenSim(long experimentId, long fromSimMs, long toSimMs) {
+        if (toSimMs <= fromSimMs) return new LinkedHashMap<>();
+
+        List<EnergyTelemetryEntity> rows =
+                repo.findByExperimentIdAndSimRangeOrderByDeviceIdAscSimTimeAsc(experimentId, fromSimMs, toSimMs);
+
+        return computeKwhPerDeviceFromRows(rows);
+    }
+
+    private Map<String, Double> computeKwhPerDeviceFromRows(List<EnergyTelemetryEntity> rows) {
         Map<String, List<EnergyTelemetryEntity>> byDevice = new LinkedHashMap<>();
         for (EnergyTelemetryEntity e : rows) {
             if (e.getDeviceId() == null || e.getSimTimeMs() == null || e.getPowerW() == null) continue;
@@ -144,12 +161,12 @@ public class EnergySummaryService {
             double wh = integrateWhSim(entry.getValue());
             result.put(entry.getKey(), round(wh / 1000.0, 4));
         }
-
         return result;
     }
 
     /**
      * Metadane eksperymentu: start/end/duration + peak + samples
+     * (dla CAŁEGO eksperymentu)
      */
     public Map<String, Object> computeExperimentMeta(long experimentId) {
         var stats = repo.findExperimentStats(experimentId);
@@ -179,7 +196,6 @@ public class EnergySummaryService {
         if (duration != null && duration > 0) {
             double durationHours = duration / 1000.0 / 3600.0;
 
-            // total energy = suma wszystkich urządzeń
             Map<String, Double> perDevice = computeKwhPerDeviceForExperiment(experimentId);
             double totalKwh = perDevice.values().stream().mapToDouble(Double::doubleValue).sum();
 
@@ -198,6 +214,74 @@ public class EnergySummaryService {
         out.put("samples", samples);
         out.put("avgPowerW", round(avgPowerW, 2));
         out.put("peakToAvgRatio", round(peakToAvgRatio, 2));
+        return out;
+    }
+
+    /**
+     * ✅ NOWE: meta liczone tylko w oknie sim_time_ms [fromSimMs..toSimMs]
+     * To jest "summary at achieve".
+     */
+    public Map<String, Object> computeExperimentMetaBetweenSim(long experimentId, long fromSimMs, long toSimMs) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("experimentId", experimentId);
+        out.put("startSimTimeMs", fromSimMs);
+        out.put("endSimTimeMs", toSimMs);
+
+        long duration = Math.max(0, toSimMs - fromSimMs);
+        out.put("durationMs", duration);
+
+        List<EnergyTelemetryEntity> rows =
+                repo.findByExperimentIdAndSimRangeOrderByDeviceIdAscSimTimeAsc(experimentId, fromSimMs, toSimMs);
+
+        if (rows.isEmpty()) {
+            out.put("samples", 0L);
+            out.put("totalKwh", 0.0);
+            out.put("peakDevicePowerW", 0.0);
+            out.put("peakTotalPowerW", 0.0);
+            out.put("avgPowerW", 0.0);
+            out.put("peakToAvgRatio", 0.0);
+            return out;
+        }
+
+        // samples
+        out.put("samples", (long) rows.size());
+
+        // peak device power (max pojedynczego rekordu)
+        double peakDevice = rows.stream()
+                .map(EnergyTelemetryEntity::getPowerW)
+                .filter(Objects::nonNull)
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(0.0);
+        out.put("peakDevicePowerW", peakDevice);
+
+        // peak total power: sum(powerW) per bucket (1s)
+        Map<Long, Double> sumPerBucket = new HashMap<>();
+        for (EnergyTelemetryEntity e : rows) {
+            if (e.getSimTimeMs() == null || e.getPowerW() == null) continue;
+            long bucket = e.getSimTimeMs() / 1000L;
+            sumPerBucket.merge(bucket, e.getPowerW(), Double::sum);
+        }
+        double peakTotal = sumPerBucket.values().stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
+        out.put("peakTotalPowerW", peakTotal);
+
+        // total energy in window
+        Map<String, Double> perDevice = computeKwhPerDeviceFromRows(rows);
+        double totalKwh = perDevice.values().stream().mapToDouble(Double::doubleValue).sum();
+        out.put("totalKwh", round(totalKwh, 4));
+
+        // avgPower in window
+        double avgPowerW = 0.0;
+        if (duration > 0) {
+            double hours = duration / 1000.0 / 3600.0;
+            avgPowerW = hours > 0 ? (totalKwh * 1000.0 / hours) : 0.0;
+        }
+        out.put("avgPowerW", round(avgPowerW, 2));
+
+        // ratio
+        double ratio = avgPowerW > 0 ? (peakTotal / avgPowerW) : 0.0;
+        out.put("peakToAvgRatio", round(ratio, 2));
+
         return out;
     }
 

@@ -8,11 +8,15 @@ public class WorkloadDto {
     public long seed;                // seed wspólny (albo na start jeden)
     public int powerLimitW = 2000;   // na start default
 
+
+
     public List<DeviceRequirementDto> devices;
 
     public static class DeviceRequirementDto {
+        public double targetKwh;   // ile energii ma "wypracować" urządzenie w trakcie runa
         public String deviceType;        // "heater", "plug", "washer", "bulb"
         public String deviceId;          // "heater-01" itd.
         public int requiredOnSeconds;    // ile sekund ma być ON w trakcie runa
     }
+
 }

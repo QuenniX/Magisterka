@@ -7,6 +7,8 @@ public class EnergySummaryDto {
     public String to;
     public Double totalKwh;
     public List<DeviceEnergyDto> devices;
+    private double avgPowerW;
+    private double peakToAvgRatio;
 
     public static class DeviceEnergyDto {
         public String deviceId;

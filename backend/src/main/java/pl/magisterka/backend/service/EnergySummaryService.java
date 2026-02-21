@@ -169,12 +169,35 @@ public class EnergySummaryService {
         Long end = stats.getMaxSim();
         Long duration = (start != null && end != null) ? (end - start) : null;
 
+        Double peakDevicePower = stats.getPeakDevicePowerW();
+        Double peakTotalPower = stats.getPeakTotalPowerW();
+        Long samples = stats.getSamples();
+
+        double avgPowerW = 0.0;
+        double peakToAvgRatio = 0.0;
+
+        if (duration != null && duration > 0) {
+            double durationHours = duration / 1000.0 / 3600.0;
+
+            // total energy = suma wszystkich urządzeń
+            Map<String, Double> perDevice = computeKwhPerDeviceForExperiment(experimentId);
+            double totalKwh = perDevice.values().stream().mapToDouble(Double::doubleValue).sum();
+
+            avgPowerW = durationHours > 0 ? (totalKwh * 1000.0 / durationHours) : 0.0;
+            peakToAvgRatio = avgPowerW > 0 ? (peakTotalPower / avgPowerW) : 0.0;
+
+            out.put("totalKwh", round(totalKwh, 4));
+        }
+
         out.put("experimentId", experimentId);
         out.put("startSimTimeMs", start);
         out.put("endSimTimeMs", end);
         out.put("durationMs", duration);
-        out.put("peakPowerW", stats.getPeakPowerW());
-        out.put("samples", stats.getSamples());
+        out.put("peakDevicePowerW", peakDevicePower);
+        out.put("peakTotalPowerW", peakTotalPower);
+        out.put("samples", samples);
+        out.put("avgPowerW", round(avgPowerW, 2));
+        out.put("peakToAvgRatio", round(peakToAvgRatio, 2));
         return out;
     }
 

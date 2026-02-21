@@ -1,8 +1,9 @@
 package pl.magisterka.backend.api;
 
 import org.springframework.web.bind.annotation.*;
+import pl.magisterka.backend.api.dto.WorkloadDto;
 import pl.magisterka.backend.service.EnergySummaryService;
-
+import pl.magisterka.backend.service.ExperimentService;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -11,9 +12,12 @@ import java.util.Map;
 public class ExperimentAnalyticsController {
 
     private final EnergySummaryService energySummaryService;
+    private final ExperimentService experimentService;
 
-    public ExperimentAnalyticsController(EnergySummaryService energySummaryService) {
+    public ExperimentAnalyticsController(EnergySummaryService energySummaryService,
+                                         ExperimentService experimentService) {
         this.energySummaryService = energySummaryService;
+        this.experimentService = experimentService;
     }
 
     @GetMapping("/{id}/energy-summary")
@@ -31,5 +35,10 @@ public class ExperimentAnalyticsController {
         out.put("totalKwh", Math.round(total * 10000.0) / 10000.0);
 
         return out;
+    }
+
+    @PostMapping("/compare-run")
+    public Map<String, Object> compareRun(@RequestBody WorkloadDto workload) {
+        return experimentService.compareRun(workload);
     }
 }

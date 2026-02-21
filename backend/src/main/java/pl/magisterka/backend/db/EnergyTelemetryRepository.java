@@ -38,18 +38,29 @@ public interface EnergyTelemetryRepository extends JpaRepository<EnergyTelemetry
     interface ExperimentStatsRow {
         Long getMinSim();
         Long getMaxSim();
-        Double getPeakPowerW();
+        Double getPeakDevicePowerW();   // max pojedynczego rekordu
+        Double getPeakTotalPowerW();    // max sumy po czasie
         Long getSamples();
     }
 
     @Query(value = """
-        select
-          min(sim_time_ms) as minSim,
-          max(sim_time_ms) as maxSim,
-          max(powerw)      as peakPowerW,
-          count(*)         as samples
-        from energy_telemetry
-        where experiment_id = :experimentId
-    """, nativeQuery = true)
+    select
+      min(sim_time_ms) as minSim,
+      max(sim_time_ms) as maxSim,
+      max(powerw)      as peakDevicePowerW,
+      (
+        select max(sum_power)
+        from (
+          select floor(sim_time_ms / 1000) as bucket,
+                 sum(powerw) as sum_power
+          from energy_telemetry
+          where experiment_id = :experimentId
+          group by bucket
+        ) t
+      ) as peakTotalPowerW,
+      count(*)         as samples
+    from energy_telemetry
+    where experiment_id = :experimentId
+""", nativeQuery = true)
     ExperimentStatsRow findExperimentStats(@Param("experimentId") long experimentId);
 }

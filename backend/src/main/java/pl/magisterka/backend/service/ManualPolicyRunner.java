@@ -4,6 +4,7 @@ import org.eclipse.paho.client.mqttv3.MqttException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import pl.magisterka.backend.api.dto.WorkloadDto;
 import pl.magisterka.backend.db.ExperimentEntity;
 import pl.magisterka.backend.mqtt.MqttCommandPublisher;
 import pl.magisterka.backend.model.CommandType;
@@ -16,7 +17,11 @@ public class ManualPolicyRunner {
     private static final Logger log = LoggerFactory.getLogger(ManualPolicyRunner.class);
 
     private final MqttCommandPublisher cmdPublisher;
+    private volatile WorkloadDto workload;
 
+    public void setWorkload(WorkloadDto workload) {
+        this.workload = workload;
+    }
     private Thread worker;
     private final AtomicBoolean running = new AtomicBoolean(false);
 

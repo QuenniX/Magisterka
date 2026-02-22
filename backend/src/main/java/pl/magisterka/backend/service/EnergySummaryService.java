@@ -3,6 +3,8 @@ package pl.magisterka.backend.service;
 import org.springframework.stereotype.Service;
 import pl.magisterka.backend.db.EnergyTelemetryEntity;
 import pl.magisterka.backend.db.EnergyTelemetryRepository;
+import pl.magisterka.backend.db.WeeklyPlanRuleEntity;
+import pl.magisterka.backend.db.WeeklyPlanRuleRepository;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -14,9 +16,11 @@ import java.util.*;
 public class EnergySummaryService {
 
     private final EnergyTelemetryRepository repo;
+    private final WeeklyPlanRuleRepository weeklyPlanRuleRepository;
 
-    public EnergySummaryService(EnergyTelemetryRepository repo) {
+    public EnergySummaryService(EnergyTelemetryRepository repo, WeeklyPlanRuleRepository weeklyPlanRuleRepository) {
         this.repo = repo;
+        this.weeklyPlanRuleRepository = weeklyPlanRuleRepository;
     }
 
     // ---------------------------------------
@@ -80,7 +84,6 @@ public class EnergySummaryService {
 
         if (points.size() < 2) return List.of();
 
-        // dzielimy energię na dni (UTC)
         Map<LocalDate, Double> whPerDay = new LinkedHashMap<>();
 
         for (int i = 1; i < points.size(); i++) {
@@ -95,7 +98,6 @@ public class EnergySummaryService {
             double p1 = a.getPowerW();
             double p2 = b.getPowerW();
 
-            // iterujemy po “kawałkach” ograniczonych granicami dni
             Instant cursor = t1;
 
             while (cursor.isBefore(t2)) {
@@ -125,10 +127,6 @@ public class EnergySummaryService {
     // EXPERIMENT (SIM TIME sim_time_ms)
     // ---------------------------------------
 
-    /**
-     * Energia per device dla eksperymentu liczona po sim_time_ms (SimClock).
-     * Zwraca kWh per deviceId.
-     */
     public Map<String, Double> computeKwhPerDeviceForExperiment(long experimentId) {
         List<EnergyTelemetryEntity> rows =
                 repo.findByExperimentIdOrderByDeviceIdAscSimTimeAsc(experimentId);
@@ -136,10 +134,6 @@ public class EnergySummaryService {
         return computeKwhPerDeviceFromRows(rows);
     }
 
-    /**
-     * ✅ NOWE: Energia per device liczona tylko w zakresie sim_time_ms [fromSimMs..toSimMs]
-     * (to będzie Twoje "energy-to-achieve").
-     */
     public Map<String, Double> computeKwhPerDeviceForExperimentBetweenSim(long experimentId, long fromSimMs, long toSimMs) {
         if (toSimMs <= fromSimMs) return new LinkedHashMap<>();
 
@@ -164,10 +158,6 @@ public class EnergySummaryService {
         return result;
     }
 
-    /**
-     * Metadane eksperymentu: start/end/duration + peak + samples
-     * (dla CAŁEGO eksperymentu)
-     */
     public Map<String, Object> computeExperimentMeta(long experimentId) {
         var stats = repo.findExperimentStats(experimentId);
 
@@ -217,10 +207,6 @@ public class EnergySummaryService {
         return out;
     }
 
-    /**
-     * ✅ NOWE: meta liczone tylko w oknie sim_time_ms [fromSimMs..toSimMs]
-     * To jest "summary at achieve".
-     */
     public Map<String, Object> computeExperimentMetaBetweenSim(long experimentId, long fromSimMs, long toSimMs) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("experimentId", experimentId);
@@ -243,10 +229,8 @@ public class EnergySummaryService {
             return out;
         }
 
-        // samples
         out.put("samples", (long) rows.size());
 
-        // peak device power (max pojedynczego rekordu)
         double peakDevice = rows.stream()
                 .map(EnergyTelemetryEntity::getPowerW)
                 .filter(Objects::nonNull)
@@ -255,7 +239,6 @@ public class EnergySummaryService {
                 .orElse(0.0);
         out.put("peakDevicePowerW", peakDevice);
 
-        // peak total power: sum(powerW) per bucket (1s)
         Map<Long, Double> sumPerBucket = new HashMap<>();
         for (EnergyTelemetryEntity e : rows) {
             if (e.getSimTimeMs() == null || e.getPowerW() == null) continue;
@@ -265,12 +248,10 @@ public class EnergySummaryService {
         double peakTotal = sumPerBucket.values().stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
         out.put("peakTotalPowerW", peakTotal);
 
-        // total energy in window
         Map<String, Double> perDevice = computeKwhPerDeviceFromRows(rows);
         double totalKwh = perDevice.values().stream().mapToDouble(Double::doubleValue).sum();
         out.put("totalKwh", round(totalKwh, 4));
 
-        // avgPower in window
         double avgPowerW = 0.0;
         if (duration > 0) {
             double hours = duration / 1000.0 / 3600.0;
@@ -278,7 +259,6 @@ public class EnergySummaryService {
         }
         out.put("avgPowerW", round(avgPowerW, 2));
 
-        // ratio
         double ratio = avgPowerW > 0 ? (peakTotal / avgPowerW) : 0.0;
         out.put("peakToAvgRatio", round(ratio, 2));
 
@@ -310,4 +290,106 @@ public class EnergySummaryService {
 
         return wh;
     }
+
+    // ---------------------------------------
+    // ✅ NEW: Waste energy (outside weekly plan)
+    // ---------------------------------------
+
+    public double computeEnergyOutsidePlanKwh(long experimentId, String scenarioId, long fromSim, long toSim) {
+        var rows = repo.findByExperimentIdAndSimRangeOrderByDeviceIdAscSimTimeAsc(experimentId, fromSim, toSim);
+        if (rows.isEmpty()) return 0.0;
+
+        var rules = weeklyPlanRuleRepository.findByScenarioIdAndEnabledTrue(scenarioId);
+
+        double wasteWh = 0.0;
+
+        for (int i = 1; i < rows.size(); i++) {
+            var prev = rows.get(i - 1);
+            var curr = rows.get(i);
+
+            if (!Objects.equals(prev.getDeviceId(), curr.getDeviceId())) continue;
+
+            long t1 = nz(prev.getSimTimeMs());
+            long t2 = nz(curr.getSimTimeMs());
+            if (t2 <= t1) continue;
+
+            double p1 = nz(prev.getPowerW());
+            double p2 = nz(curr.getPowerW());
+
+            double dtHours = (t2 - t1) / 3600000.0;
+            double energyWh = ((p1 + p2) / 2.0) * dtHours;
+
+            long mid = (t1 + t2) / 2;
+            boolean inside = isInsideWeeklyPlan(curr.getDeviceId(), mid, rules);
+
+            if (!inside) wasteWh += energyWh;
+
+
+        }
+
+        return wasteWh / 1000.0;
+    }
+
+    private boolean isInsideWeeklyPlan(String deviceId, long simTimeMs, List<WeeklyPlanRuleEntity> rules) {
+        long dayMs = 24L * 60L * 60L * 1000L;
+        long weekMs = 7L * dayMs;
+
+        long weekPos = mod(simTimeMs, weekMs);
+        int dayIndex = (int) (weekPos / dayMs); // 0..6
+        long dayPosMs = weekPos % dayMs;
+
+        for (var r : rules) {
+            if (!Objects.equals(deviceId, r.getDeviceId())) continue;
+            if (!dowMatches(r.getDaysOfWeek(), dayIndex)) continue;
+
+            // EVENT (washer) ignorujemy w waste (na start)
+            if (r.getKind() == WeeklyPlanRuleEntity.Kind.EVENT) continue;
+
+            long fromMs = parseHmToMs(r.getFromTime());
+            long toMs = parseHmToMs(r.getToTime());
+
+            if (fromMs <= toMs) {
+                if (dayPosMs >= fromMs && dayPosMs < toMs) return true;
+            } else {
+                // przez północ
+                if (dayPosMs >= fromMs || dayPosMs < toMs) return true;
+            }
+        }
+
+        return false;
+    }
+
+    private boolean dowMatches(String csv, int dayIndex) {
+        if (csv == null) return false;
+        String dow = switch (dayIndex) {
+            case 0 -> "MON";
+            case 1 -> "TUE";
+            case 2 -> "WED";
+            case 3 -> "THU";
+            case 4 -> "FRI";
+            case 5 -> "SAT";
+            case 6 -> "SUN";
+            default -> "";
+        };
+        for (String p : csv.split(",")) {
+            if (dow.equalsIgnoreCase(p.trim())) return true;
+        }
+        return false;
+    }
+
+    private long parseHmToMs(String hm) {
+        if (hm == null || hm.isBlank()) return 0L;
+        String[] parts = hm.trim().split(":");
+        int h = Integer.parseInt(parts[0]);
+        int m = Integer.parseInt(parts[1]);
+        return (h * 60L + m) * 60L * 1000L;
+    }
+
+    private long mod(long a, long m) {
+        long r = a % m;
+        return r < 0 ? r + m : r;
+    }
+
+    private long nz(Long v) { return v == null ? 0L : v; }
+    private double nz(Double v) { return v == null ? 0.0 : v; }
 }

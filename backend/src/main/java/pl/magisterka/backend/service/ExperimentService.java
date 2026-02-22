@@ -235,6 +235,32 @@ public class ExperimentService {
 
         out.put("diffAbs", diffAbs);
         out.put("diffPct", diffPct);
+
+        double manualWaste = energySummaryService.computeEnergyOutsidePlanKwh(
+
+                manual.getId(),
+                req.scenarioId,
+                manualRes.getStartSimTimeMs(),
+                manualRes.getEndSimTimeMs()
+
+
+        );
+
+        double scheduleWaste = energySummaryService.computeEnergyOutsidePlanKwh(
+                schedule.getId(),
+                req.scenarioId,
+                scheduleRes.getStartSimTimeMs(),
+                scheduleRes.getEndSimTimeMs()
+        );
+
+        // 1) do meta (żeby było obok totalKwh/avg/peak)
+        ((Map<String, Object>) manualSummary.get("meta")).put("wasteKwh", round4(manualWaste));
+        ((Map<String, Object>) scheduleSummary.get("meta")).put("wasteKwh", round4(scheduleWaste));
+
+        // 2) do diffów (żeby front miał spójnie w diffAbs/diffPct)
+        diffAbs.put("wasteKwh", round4(scheduleWaste - manualWaste));
+        diffPct.put("wasteKwh", round2(pct(scheduleWaste, manualWaste)));
+
         return out;
     }
 

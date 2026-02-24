@@ -1,6 +1,8 @@
 server:
   port: 8080
 
+# Domyślnie PostgreSQL. Bez uruchomionej bazy backend nie wystartuje.
+# Aby uruchomić BEZ PostgreSQL: ustaw profil "h2" (np. -Dspring.profiles.active=h2 lub zmienna SPRING_PROFILES_ACTIVE=h2).
 spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/smarthome
@@ -14,10 +16,23 @@ spring:
         jdbc:
           time_zone: UTC
 
+# 1 real second = speedFactor sim seconds (2000 -> ~33 min sim per 1 real sec). Szybsze testy, cele osiągalne w 1-3 min.
+sim:
+  speedFactor: 2000
+
+# JWT secret (min 256 bits for HS256). Change in production.
+auth:
+  jwt:
+    secret: magisterka-demo-secret-key-at-least-32-bytes-long-for-hs256
+    expirationMs: 86400000  # 24h
+
 mqtt:
   broker: tcp://localhost:1883
   clientIdPrefix: MagisterkaBackend-
   telemetryTopic: smarthome/v1/devices/+/+/telemetry
   stateTopic: smarthome/v1/devices/+/+/state
   cmdTopicPattern: smarthome/v1/devices/%s/%s/cmd
+  # Optional: set when broker requires authentication
+  # username: backend
+  # password: secret
 

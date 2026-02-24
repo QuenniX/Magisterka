@@ -92,14 +92,14 @@ public class WasherSimulator implements DeviceSimulator {
     }
 
     @Override
-    public synchronized EnergyTelemetry nextTelemetry(long simTimeMs) {
+    public synchronized EnergyTelemetry nextTelemetry(long simTimeMs, Instant ts) {
 
         // IDLE = standby
         if (washerState == WasherState.IDLE) {
             return new EnergyTelemetry(
                     deviceId,
                     deviceType,
-                    Instant.now(),
+                    ts,
                     simTimeMs,
                     1.5, // standby ~1–2W
                     voltageV,
@@ -123,7 +123,7 @@ public class WasherSimulator implements DeviceSimulator {
                 return new EnergyTelemetry(
                         deviceId,
                         deviceType,
-                        Instant.now(),
+                        ts,
                         simTimeMs,
                         1.5,
                         voltageV,
@@ -141,7 +141,7 @@ public class WasherSimulator implements DeviceSimulator {
         return new EnergyTelemetry(
                 deviceId,
                 deviceType,
-                Instant.now(),
+                ts,
                 simTimeMs,
                 powerW,
                 voltageV,

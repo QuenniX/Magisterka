@@ -4,7 +4,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import pl.magisterka.backend.api.dto.LatestStateDto;
-import pl.magisterka.backend.db.DeviceStateEventEntity;
 import pl.magisterka.backend.db.DeviceStateEventRepository;
 
 import java.util.List;

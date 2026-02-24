@@ -32,7 +32,7 @@ public class PlugSimulator implements DeviceSimulator {
     }
 
     @Override
-    public EnergyTelemetry nextTelemetry(long simTimeMs) {
+    public EnergyTelemetry nextTelemetry(long simTimeMs, Instant ts) {
 
         // co jakiś czas zmiana stanu
         if (random.nextDouble() < 0.1) {
@@ -48,7 +48,7 @@ public class PlugSimulator implements DeviceSimulator {
         return new EnergyTelemetry(
                 deviceId,
                 deviceType,
-                Instant.now(),
+                ts,
                 simTimeMs,
                 powerW,
                 voltageV,

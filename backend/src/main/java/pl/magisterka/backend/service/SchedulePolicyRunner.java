@@ -20,6 +20,7 @@ public class SchedulePolicyRunner {
     private final MqttCommandPublisher cmdPublisher;
     private final SimTimeService simTimeService;
 
+    @SuppressWarnings("unused") // ustawiane przez setWorkload(), zarezerwowane pod przyszłe rozszerzenia
     private volatile WorkloadDto workload;
 
     public void setWorkload(WorkloadDto workload) {
@@ -67,9 +68,11 @@ public class SchedulePolicyRunner {
 
         boolean washerDone = false;
         boolean heaterOn = false;
+        boolean heater2On = false;
         boolean plugOn = false;
         boolean bulb1On = false;
         boolean bulb2On = false;
+        boolean bulb3On = false;
 
         while (running.get()) {
             try {
@@ -82,9 +85,11 @@ public class SchedulePolicyRunner {
 
                     washerDone = false;
                     heaterOn = false;
+                    heater2On = false;
                     plugOn = false;
                     bulb1On = false;
                     bulb2On = false;
+                    bulb3On = false;
 
                     log.info("SchedulePolicyRunner new day(sim): dayIndex={}", currentDayIndex);
                 }
@@ -102,7 +107,7 @@ public class SchedulePolicyRunner {
                     plugOn = false;
                 }
 
-                // heater 17:30–20:30
+                // heater-01 17:30–20:30
                 if (!heaterOn && minute >= 17 * 60 + 30) {
                     publish("heater", "heater-01", CommandType.START, experimentId);
                     heaterOn = true;
@@ -110,6 +115,16 @@ public class SchedulePolicyRunner {
                 if (heaterOn && minute >= 20 * 60 + 30) {
                     publish("heater", "heater-01", CommandType.STOP, experimentId);
                     heaterOn = false;
+                }
+
+                // heater-02 17:30–20:30 (jak heater-01)
+                if (!heater2On && minute >= 17 * 60 + 30) {
+                    publish("heater", "heater-02", CommandType.START, experimentId);
+                    heater2On = true;
+                }
+                if (heater2On && minute >= 20 * 60 + 30) {
+                    publish("heater", "heater-02", CommandType.STOP, experimentId);
+                    heater2On = false;
                 }
 
                 // bulb-01 18:00–23:30
@@ -130,6 +145,16 @@ public class SchedulePolicyRunner {
                 if (bulb2On && minute >= 23 * 60) {
                     publish("bulb", "bulb-02", CommandType.STOP, experimentId);
                     bulb2On = false;
+                }
+
+                // bulb-03 19:00–23:00 (jak bulb-02)
+                if (!bulb3On && minute >= 19 * 60) {
+                    publish("bulb", "bulb-03", CommandType.START, experimentId);
+                    bulb3On = true;
+                }
+                if (bulb3On && minute >= 23 * 60) {
+                    publish("bulb", "bulb-03", CommandType.STOP, experimentId);
+                    bulb3On = false;
                 }
 
                 // washer start 18:00 raz dziennie

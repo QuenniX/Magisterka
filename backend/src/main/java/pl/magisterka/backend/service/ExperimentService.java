@@ -1,19 +1,26 @@
 package pl.magisterka.backend.service;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pl.magisterka.backend.api.dto.WorkloadDto;
+import pl.magisterka.backend.api.dto.WeeklyPlanBatchRequestDto;
 import pl.magisterka.backend.api.dto.WeeklyPlanCompareRequestDto;
 import pl.magisterka.backend.db.ExperimentEntity;
 import pl.magisterka.backend.db.ExperimentRepository;
 import pl.magisterka.backend.model.ExperimentType;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 @Service
 public class ExperimentService {
+
+    /** Safety buffer (real seconds) added to min duration so sim has time to complete. */
+    private static final int DURATION_BUFFER_SEC = 30;
 
     private final ExperimentRepository experimentRepository;
     private final ManualPolicyRunner manualPolicyRunner;
@@ -22,6 +29,7 @@ public class ExperimentService {
     private final SimTimeService simTimeService;
     private final WeeklyPlanManualRunner weeklyPlanManualRunner;
     private final WeeklyPlanScheduleRunner weeklyPlanScheduleRunner;
+    private final int speedFactor;
 
     public ExperimentService(
             ExperimentRepository experimentRepository,
@@ -30,7 +38,8 @@ public class ExperimentService {
             EnergySummaryService energySummaryService,
             SimTimeService simTimeService,
             WeeklyPlanManualRunner weeklyPlanManualRunner,
-            WeeklyPlanScheduleRunner weeklyPlanScheduleRunner
+            WeeklyPlanScheduleRunner weeklyPlanScheduleRunner,
+            @Value("${sim.speedFactor:600}") int speedFactor
     ) {
         this.experimentRepository = experimentRepository;
         this.manualPolicyRunner = manualPolicyRunner;
@@ -39,6 +48,7 @@ public class ExperimentService {
         this.simTimeService = simTimeService;
         this.weeklyPlanManualRunner = weeklyPlanManualRunner;
         this.weeklyPlanScheduleRunner = weeklyPlanScheduleRunner;
+        this.speedFactor = speedFactor;
     }
 
     public Optional<ExperimentEntity> getActiveExperiment() {
@@ -182,6 +192,12 @@ public class ExperimentService {
         int weeks = req.weeks <= 0 ? 4 : req.weeks;
         long simDurationMs = weeks * 7L * 24L * 60L * 60L * 1000L;
 
+        // Ensure real-time timeout covers full sim duration (1B fix).
+        long minDurationSec = computeMinRealDurationSec(weeks, speedFactor);
+        long effectiveDurationSec = req.durationSeconds < minDurationSec
+                ? minDurationSec + DURATION_BUFFER_SEC
+                : req.durationSeconds;
+
         ExperimentEntity manual = createExperiment("CompareWeeklyPlan-MANUAL", ExperimentType.MANUAL, req.seed);
         ExperimentEntity schedule = createExperiment("CompareWeeklyPlan-SCHEDULE", ExperimentType.SCHEDULE, req.seed);
 
@@ -194,7 +210,7 @@ public class ExperimentService {
             manual.setActive(true);
             experimentRepository.save(manual);
             weeklyPlanManualRunner.start(manual, req.scenarioId);
-            manualRes = runForSimDurationOrTimeout(manual.getId(), simDurationMs, req.durationSeconds);
+            manualRes = runForSimDurationOrTimeout(manual.getId(), simDurationMs, effectiveDurationSec);
             weeklyPlanManualRunner.stop();
             manual.setActive(false);
             experimentRepository.save(manual);
@@ -202,7 +218,9 @@ public class ExperimentService {
             schedule.setActive(true);
             experimentRepository.save(schedule);
             weeklyPlanScheduleRunner.start(schedule, req.scenarioId);
-            scheduleRes = runForSimDurationOrTimeout(schedule.getId(), simDurationMs, req.durationSeconds);
+            // Symulator NIE resetuje czasu – po Manual jest już na ~1 tydzień. Drugi przebieg musi czekać
+            // na kolejny tydzień sym (od końca Manual), inaczej startSim=0 i warunek spełnia się od razu → Schedule ~0 kWh.
+            scheduleRes = runForSimDurationOrTimeout(schedule.getId(), simDurationMs, effectiveDurationSec, manualRes.getEndSimTimeMs());
             weeklyPlanScheduleRunner.stop();
             schedule.setActive(false);
             experimentRepository.save(schedule);
@@ -264,11 +282,44 @@ public class ExperimentService {
         return out;
     }
 
-    private RunUntilResult runForSimDurationOrTimeout(long experimentId, long simDurationMs, long durationSeconds) throws InterruptedException {
+    /**
+     * Runs compareWeeklyPlanRun N times (e.g. N=20) with varying seeds for stable statistics.
+     */
+    public Map<String, Object> batchCompareWeeklyPlanRun(WeeklyPlanBatchRequestDto batchReq) {
+        if (batchReq == null || batchReq.scenarioId == null || batchReq.scenarioId.isBlank()) {
+            throw new IllegalArgumentException("scenarioId required");
+        }
+        int repeats = Math.max(1, Math.min(batchReq.repeats, 100));
+        WeeklyPlanCompareRequestDto req = new WeeklyPlanCompareRequestDto();
+        req.scenarioId = batchReq.scenarioId;
+        req.weeks = batchReq.weeks <= 0 ? 4 : batchReq.weeks;
+        req.durationSeconds = batchReq.durationSeconds;
+        List<Map<String, Object>> runs = new ArrayList<>();
+        for (int i = 0; i < repeats; i++) {
+            req.seed = batchReq.seed + i;
+            runs.add(compareWeeklyPlanRun(req));
+        }
+        Map<String, Object> out = new HashMap<>();
+        out.put("repeats", repeats);
+        out.put("scenarioId", batchReq.scenarioId);
+        out.put("weeks", req.weeks);
+        out.put("runs", runs);
+        return out;
+    }
+
+    /**
+     * Runs until the requested sim duration is reached or real-time timeout expires.
+     * Primary exit condition: sim time reaches simDurationMs (full weeks of sim).
+     * durationSeconds is a safety timeout only (prevents runaway if sim stalls).
+     * @param startSimTimeMsOverride when >= 0, used as startSim (dla drugiego przebiegu – symulator nie resetuje czasu).
+     */
+    private RunUntilResult runForSimDurationOrTimeout(long experimentId, long simDurationMs, long durationSeconds, long startSimTimeMsOverride) throws InterruptedException {
         long startReal = System.currentTimeMillis();
         long deadlineReal = startReal + Math.max(10, durationSeconds) * 1000L;
 
-        long startSim = simTimeService.getCurrentSimTimeMs(experimentId);
+        long startSim = startSimTimeMsOverride >= 0
+                ? startSimTimeMsOverride
+                : simTimeService.getCurrentSimTimeMs(experimentId);
 
         while (System.currentTimeMillis() < deadlineReal) {
             long nowSim = simTimeService.getCurrentSimTimeMs(experimentId);
@@ -280,6 +331,20 @@ public class ExperimentService {
 
         long endSim = simTimeService.getCurrentSimTimeMs(experimentId);
         return new RunUntilResult(false, startSim, endSim);
+    }
+
+    private RunUntilResult runForSimDurationOrTimeout(long experimentId, long simDurationMs, long durationSeconds) throws InterruptedException {
+        return runForSimDurationOrTimeout(experimentId, simDurationMs, durationSeconds, -1L);
+    }
+
+    /**
+     * Minimum real-time duration (seconds) required to cover the given sim weeks.
+     * Formula: simDurationMs / 1000 / speedFactor (speedFactor = sim seconds per real second).
+     */
+    public static long computeMinRealDurationSec(int weeks, int speedFactor) {
+        if (weeks <= 0 || speedFactor <= 0) return 60L;
+        long simDurationMs = weeks * 7L * 24L * 60L * 60L * 1000L;
+        return (long) Math.ceil((double) simDurationMs / 1000.0 / speedFactor);
     }
 
     // =========================

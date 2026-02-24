@@ -19,6 +19,7 @@ public class ManualPolicyRunner {
     private final SimTimeService simTimeService;
     private final MqttCommandPublisher cmdPublisher;
 
+    @SuppressWarnings("unused") // ustawiane przez setWorkload(), zarezerwowane pod przyszłe rozszerzenia
     private volatile WorkloadDto workload;
 
     public void setWorkload(WorkloadDto workload) {
@@ -68,6 +69,10 @@ public class ManualPolicyRunner {
         boolean bulb1Stopped = false;
         boolean bulb2Started = false;
         boolean bulb2Stopped = false;
+        boolean bulb3Started = false;
+        boolean bulb3Stopped = false;
+        boolean heater2Started = false;
+        boolean heater2Stopped = false;
         boolean plugStarted = false;
         boolean plugStopped = false;
 
@@ -75,10 +80,14 @@ public class ManualPolicyRunner {
         long washerJitter = 0;
         long heaterStartJitter = 0;
         long heaterStopJitter = 0;
+        long heater2StartJitter = 0;
+        long heater2StopJitter = 0;
         long bulb1StartJitter = 0;
         long bulb1StopJitter = 0;
         long bulb2StartJitter = 0;
         long bulb2StopJitter = 0;
+        long bulb3StartJitter = 0;
+        long bulb3StopJitter = 0;
         long plugStartJitter = 0;
         long plugStopJitter = 0;
 
@@ -99,17 +108,25 @@ public class ManualPolicyRunner {
                     bulb1Stopped = false;
                     bulb2Started = false;
                     bulb2Stopped = false;
+                    bulb3Started = false;
+                    bulb3Stopped = false;
+                    heater2Started = false;
+                    heater2Stopped = false;
                     plugStarted = false;
                     plugStopped = false;
 
                     washerJitter = jitterMs(rng, 20);        // ±20 min
-                    heaterStartJitter = jitterMs(rng, 15);   // ±15 min
+                    heaterStartJitter = jitterMs(rng, 15);
                     heaterStopJitter = jitterMs(rng, 15);
-                    bulb1StartJitter = jitterMs(rng, 10);    // ±10 min
+                    heater2StartJitter = jitterMs(rng, 15);
+                    heater2StopJitter = jitterMs(rng, 15);
+                    bulb1StartJitter = jitterMs(rng, 10);
                     bulb1StopJitter = jitterMs(rng, 10);
                     bulb2StartJitter = jitterMs(rng, 10);
                     bulb2StopJitter = jitterMs(rng, 10);
-                    plugStartJitter = jitterMs(rng, 30);     // ±30 min
+                    bulb3StartJitter = jitterMs(rng, 10);
+                    bulb3StopJitter = jitterMs(rng, 10);
+                    plugStartJitter = jitterMs(rng, 30);
                     plugStopJitter = jitterMs(rng, 30);
 
                     log.info("ManualPolicyRunner new day(sim): dayIndex={} jitters(ms) washer={} heaterStart={} heaterStop={}",
@@ -167,6 +184,26 @@ public class ManualPolicyRunner {
                 if (!bulb2Stopped && timeOfDayMs >= at(23, 0) + bulb2StopJitter) {
                     publish("bulb", "bulb-02", CommandType.STOP, experimentId);
                     bulb2Stopped = true;
+                }
+
+                // bulb-03 start 19:00, stop 23:00 (jak bulb-02)
+                if (!bulb3Started && timeOfDayMs >= at(19, 0) + bulb3StartJitter) {
+                    publish("bulb", "bulb-03", CommandType.START, experimentId);
+                    bulb3Started = true;
+                }
+                if (!bulb3Stopped && timeOfDayMs >= at(23, 0) + bulb3StopJitter) {
+                    publish("bulb", "bulb-03", CommandType.STOP, experimentId);
+                    bulb3Stopped = true;
+                }
+
+                // heater-02 start 17:30, stop 20:30 (jak heater-01)
+                if (!heater2Started && timeOfDayMs >= at(17, 30) + heater2StartJitter) {
+                    publish("heater", "heater-02", CommandType.START, experimentId);
+                    heater2Started = true;
+                }
+                if (!heater2Stopped && timeOfDayMs >= at(20, 30) + heater2StopJitter) {
+                    publish("heater", "heater-02", CommandType.STOP, experimentId);
+                    heater2Stopped = true;
                 }
 
                 // washer start 18:00 (raz dziennie)

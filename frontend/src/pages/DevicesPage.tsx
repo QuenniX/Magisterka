@@ -38,9 +38,9 @@ export default function DevicesPage() {
       const data: Device[] = await res.json();
       setDevices(data);
       setBackendUp(true);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setBackendUp(false);
-      setError(e?.message ?? "Failed to fetch");
+      setError(e instanceof Error ? e.message : "Failed to fetch");
     }
   };
 
@@ -59,149 +59,118 @@ export default function DevicesPage() {
       setError(null);
       setSending(deviceId);
 
+      const token = localStorage.getItem("magisterka_jwt");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch(
         `${API_BASE}/api/devices/${deviceType}/${deviceId}/cmd`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cmd }),
-        }
+        { method: "POST", headers, body: JSON.stringify({ cmd }) }
       );
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
+        if (res.status === 403) {
+          throw new Error("Brak dostępu. Wyloguj i zaloguj ponownie.");
+        }
         throw new Error(`CMD failed: ${res.status} ${res.statusText} ${text}`);
       }
-
       await fetchDevices();
-    } catch (e: any) {
-      setError(e?.message ?? "Unknown error");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setSending(null);
     }
   };
 
   return (
-    <div style={{ padding: "20px", fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
-        <h1 style={{ margin: 0 }}>Devices</h1>
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
+        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>Urządzenia</h1>
         <span
+          className="app-card"
           style={{
-            fontSize: "14px",
-            padding: "4px 8px",
-            borderRadius: "999px",
-            border: "1px solid gray",
-            opacity: 0.9,
+            padding: "6px 12px",
+            fontSize: "0.9rem",
           }}
         >
-          Backend:{" "}
-          <b style={{ color: backendUp ? "#5be37a" : "#ff6b6b" }}>
-            {backendUp ? "OK" : "DOWN"}
-          </b>
+          Backend: <b style={{ color: backendUp ? "var(--success)" : "var(--danger)" }}>{backendUp ? "OK" : "DOWN"}</b>
         </span>
       </div>
 
       {error && (
         <div
+          className="app-card"
           style={{
-            border: "1px solid #a00",
-            padding: "10px",
-            marginTop: "12px",
-            marginBottom: "12px",
-            borderRadius: "8px",
+            padding: 12,
+            marginBottom: 20,
+            borderColor: "var(--danger)",
+            background: "rgba(248, 81, 73, 0.08)",
           }}
         >
-          <b>Error:</b> {error}
+          <b>Błąd:</b> {error}
         </div>
       )}
 
-      <div style={{ display: "grid", gap: "12px", maxWidth: "900px", marginTop: "12px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
         {devices.map((device) => {
           const on = isOn(device.state);
           const busy = sending === device.deviceId;
-
           return (
             <div
               key={device.deviceId}
-              style={{
-                border: "1px solid gray",
-                padding: "14px",
-                borderRadius: "10px",
-              }}
+              className="app-card"
+              style={{ padding: 18 }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
                 <div
-                  style={{ cursor: "pointer" }}
-                  onClick={() =>
-                    navigate(`/devices/${device.deviceType}/${device.deviceId}`)
-                  }
-                  title="Open details"
+                  style={{ cursor: "pointer", flex: 1 }}
+                  onClick={() => navigate(`/devices/${device.deviceType}/${device.deviceId}`)}
+                  title="Szczegóły"
                 >
-                  <h3 style={{ margin: 0 }}>{device.deviceId}</h3>
-                  <div style={{ opacity: 0.8, marginTop: "4px" }}>
-                    Type: <b>{device.deviceType}</b>
+                  <h3 style={{ margin: 0, fontSize: "1.1rem" }}>{device.deviceId}</h3>
+                  <div style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: 4 }}>
+                    {device.deviceType}
                   </div>
                 </div>
-
-                <div style={{ textAlign: "right" }}>
-                  <span
-                    style={{
-                      display: "inline-block",
-                      padding: "6px 10px",
-                      borderRadius: "999px",
-                      border: "1px solid gray",
-                      fontWeight: 700,
-                      color: on ? "#5be37a" : "#ff6b6b",
-                    }}
-                  >
-                    {on ? "ON" : "OFF"}
-                  </span>
-                  <div style={{ opacity: 0.7, marginTop: "6px", fontSize: "12px" }}>
-                    Last update: {fmtTs(device.ts)}
-                  </div>
-                </div>
+                <span
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 999,
+                    fontSize: "0.85rem",
+                    fontWeight: 600,
+                    background: on ? "rgba(63, 185, 80, 0.2)" : "rgba(248, 81, 73, 0.2)",
+                    color: on ? "var(--success)" : "var(--danger)",
+                  }}
+                >
+                  {on ? "ON" : "OFF"}
+                </span>
               </div>
-
-              <div style={{ marginTop: "12px", display: "grid", gap: "6px" }}>
-                <div>
-                  Power: <b>{fmt(device.powerW)}</b> W
-                </div>
-                <div>
-                  Voltage: <b>{fmt(device.voltageV)}</b> V
-                </div>
+              <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: "0.9rem" }}>
+                <div>Moc: <b>{fmt(device.powerW)}</b> W</div>
+                <div>Napięcie: <b>{fmt(device.voltageV)}</b> V</div>
               </div>
-
-              <div style={{ display: "flex", gap: "10px", marginTop: "12px", alignItems: "center" }}>
+              <div style={{ marginTop: 12, fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                Ostatnia aktualizacja: {fmtTs(device.ts)}
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
                 <button
                   onClick={() => sendCmd(device.deviceType, device.deviceId, "START")}
                   disabled={busy || on}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: "8px",
-                    border: "1px solid gray",
-                    cursor: busy || on ? "not-allowed" : "pointer",
-                    opacity: busy || on ? 0.6 : 1,
-                  }}
+                  className="primary"
+                  style={{ flex: 1 }}
                 >
                   START
                 </button>
-
                 <button
                   onClick={() => sendCmd(device.deviceType, device.deviceId, "STOP")}
                   disabled={busy || !on}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: "8px",
-                    border: "1px solid gray",
-                    cursor: busy || !on ? "not-allowed" : "pointer",
-                    opacity: busy || !on ? 0.6 : 1,
-                  }}
+                  style={{ flex: 1 }}
                 >
                   STOP
                 </button>
-
-                {busy && <span style={{ opacity: 0.8 }}>Sending...</span>}
               </div>
+              {busy && <div style={{ marginTop: 8, fontSize: "0.85rem", color: "var(--text-muted)" }}>Wysyłanie...</div>}
             </div>
           );
         })}

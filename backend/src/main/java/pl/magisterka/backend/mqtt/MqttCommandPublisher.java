@@ -28,7 +28,10 @@ public class MqttCommandPublisher {
         MqttConnectOptions options = new MqttConnectOptions();
         options.setAutomaticReconnect(true);
         options.setCleanSession(true);
-
+        if (props.getUsername() != null && !props.getUsername().isBlank()) {
+            options.setUserName(props.getUsername());
+            if (props.getPassword() != null) options.setPassword(props.getPassword().toCharArray());
+        }
         client.connect(options);
         log.info("MQTT(cmd) connected to {}", props.getBroker());
     }

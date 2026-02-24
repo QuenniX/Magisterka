@@ -42,7 +42,7 @@ public class FridgeSimulator implements DeviceSimulator {
     }
 
     @Override
-    public synchronized EnergyTelemetry nextTelemetry(long simTimeMs) {
+    public synchronized EnergyTelemetry nextTelemetry(long simTimeMs, Instant ts) {
 
         // pierwsze ustawienie timera
         if (stateUntilSimMs == 0) {
@@ -68,7 +68,7 @@ public class FridgeSimulator implements DeviceSimulator {
         return new EnergyTelemetry(
                 deviceId,
                 deviceType,
-                Instant.now(),
+                ts,
                 simTimeMs,
                 powerW,
                 voltageV,

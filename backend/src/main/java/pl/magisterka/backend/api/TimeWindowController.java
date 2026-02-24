@@ -86,6 +86,8 @@ public class TimeWindowController {
                 .collect(Collectors.groupingBy(DeviceScheduleEntity::getWindowId))
                 .values()
                 .stream()
+                .filter(group -> group.stream().anyMatch(s -> s.getCmd() == CommandType.START)
+                        && group.stream().anyMatch(s -> s.getCmd() == CommandType.STOP))
                 .map(group -> {
                     DeviceScheduleEntity start = group.stream()
                             .filter(s -> s.getCmd() == CommandType.START)

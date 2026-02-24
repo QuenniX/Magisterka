@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { timeWindowsApi } from "../api/timeWindowsApi";
+import { getDevices, deviceLabel, type DeviceItem } from "../api/devicesApi";
 import type { CreateTimeWindowRequest, TimeWindow } from "../types/TimeWindow";
 
 const DEFAULT_TZ = "Europe/Warsaw";
 
 export default function SchedulesPage() {
   const [items, setItems] = useState<TimeWindow[]>([]);
+  const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // form
-  const [deviceId, setDeviceId] = useState("heater-01");
-  const [deviceType, setDeviceType] = useState("heater");
+  const [selectedDevice, setSelectedDevice] = useState<DeviceItem | null>(null);
   const [from, setFrom] = useState("18:00");
   const [to, setTo] = useState("22:00");
   const [timezone, setTimezone] = useState(DEFAULT_TZ);
@@ -37,13 +37,23 @@ export default function SchedulesPage() {
     refresh();
   }, []);
 
+  useEffect(() => {
+    getDevices().then((list) => {
+      setDevices(list);
+      if (list.length > 0 && !selectedDevice) setSelectedDevice(list[0]);
+    });
+  }, []);
+
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-
+    if (!selectedDevice) {
+      setError("Wybierz urządzenie z listy (uruchom symulator, jeśli lista jest pusta).");
+      return;
+    }
     const req: CreateTimeWindowRequest = {
-      deviceId: deviceId.trim(),
-      deviceType: deviceType.trim(),
+      deviceId: selectedDevice.deviceId,
+      deviceType: selectedDevice.deviceType,
       from,
       to,
       timezone: timezone.trim() || DEFAULT_TZ,
@@ -81,138 +91,113 @@ export default function SchedulesPage() {
   }
 
   return (
-    <div style={{ padding: 24, maxWidth: 1100 }}>
-      <h1 style={{ marginBottom: 8 }}>Schedules</h1>
-      <div style={{ opacity: 0.8, marginBottom: 16 }}>
-        Time windows (From–To) stored as START/STOP cron schedules in backend.
-      </div>
+    <div>
+      <h1 style={{ margin: "0 0 8px", fontSize: "1.5rem" }}>Harmonogramy</h1>
+      <p style={{ color: "var(--text-muted)", marginBottom: 24 }}>
+        Okna czasowe (From–To) zapisane jako harmonogramy START/STOP w backendzie.
+      </p>
 
       <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap" }}>
-        {/* Creator */}
-        <div style={{ border: "1px solid #333", borderRadius: 12, padding: 16, minWidth: 340 }}>
-          <h3 style={{ marginTop: 0 }}>Create time window</h3>
+        <div className="app-card" style={{ padding: 20, minWidth: 340 }}>
+          <h3 style={{ margin: "0 0 16px" }}>Nowe okno czasowe</h3>
 
-          <form onSubmit={onCreate} style={{ display: "grid", gap: 10 }}>
-            <label>
-              Device ID
-              <input
-                value={deviceId}
-                onChange={(e) => setDeviceId(e.target.value)}
-                style={{ width: "100%", padding: 8, marginTop: 4 }}
-              />
+          <form onSubmit={onCreate} style={{ display: "grid", gap: 14 }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>Urządzenie</span>
+              <select
+                value={selectedDevice ? `${selectedDevice.deviceId}|${selectedDevice.deviceType}` : ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!v) {
+                    setSelectedDevice(null);
+                    return;
+                  }
+                  const [deviceId, deviceType] = v.split("|");
+                  setSelectedDevice({ deviceId, deviceType });
+                }}
+              >
+                <option value="">-- wybierz z listy --</option>
+                {devices.map((d) => (
+                  <option key={d.deviceId} value={`${d.deviceId}|${d.deviceType}`}>
+                    {deviceLabel(d)}
+                  </option>
+                ))}
+              </select>
+              {devices.length === 0 && (
+                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Uruchom backend i symulator MQTT, potem odśwież stronę.</span>
+              )}
             </label>
-
-            <label>
-              Device Type
-              <input
-                value={deviceType}
-                onChange={(e) => setDeviceType(e.target.value)}
-                style={{ width: "100%", padding: 8, marginTop: 4 }}
-              />
-            </label>
-
             <div style={{ display: "flex", gap: 12 }}>
-              <label style={{ flex: 1 }}>
-                From
-                <input
-                  type="time"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                  style={{ width: "100%", padding: 8, marginTop: 4 }}
-                />
+              <label style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>From</span>
+                <input type="time" value={from} onChange={(e) => setFrom(e.target.value)} />
               </label>
-
-              <label style={{ flex: 1 }}>
-                To
-                <input
-                  type="time"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  style={{ width: "100%", padding: 8, marginTop: 4 }}
-                />
+              <label style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>To</span>
+                <input type="time" value={to} onChange={(e) => setTo(e.target.value)} />
               </label>
             </div>
-
-            <label>
-              Timezone
-              <input
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-                style={{ width: "100%", padding: 8, marginTop: 4 }}
-              />
+            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>Timezone</span>
+              <input value={timezone} onChange={(e) => setTimezone(e.target.value)} />
             </label>
-
-            <button type="submit" style={{ padding: "10px 12px", cursor: "pointer" }}>
-              Create
-            </button>
+            <button type="submit" className="primary">Utwórz</button>
           </form>
         </div>
 
-        {/* List */}
         <div style={{ flex: 1, minWidth: 520 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ marginTop: 0 }}>Existing windows</h3>
-            <button onClick={refresh} style={{ padding: "8px 10px", cursor: "pointer" }}>
-              Refresh
-            </button>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <h3 style={{ margin: 0 }}>Istniejące okna</h3>
+            <button onClick={refresh} disabled={loading}>{loading ? "Ładowanie..." : "Odśwież"}</button>
           </div>
-
           {error && (
-            <div style={{ border: "1px solid #a33", padding: 10, borderRadius: 8, marginBottom: 12 }}>
+            <div className="app-card" style={{ padding: 12, marginBottom: 12, borderColor: "var(--danger)", background: "rgba(248,81,73,0.08)" }}>
               {error}
             </div>
           )}
-
-          {loading ? (
-            <div>Loading...</div>
-          ) : (
-            <div style={{ border: "1px solid #333", borderRadius: 12, overflow: "hidden" }}>
+          {!loading && (
+            <div className="app-card" style={{ overflow: "hidden" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
-                  <tr style={{ background: "#151515" }}>
-                    <th style={{ textAlign: "left", padding: 10 }}>Device</th>
-                    <th style={{ textAlign: "left", padding: 10 }}>Window</th>
-                    <th style={{ textAlign: "left", padding: 10 }}>Timezone</th>
-                    <th style={{ textAlign: "left", padding: 10 }}>Enabled</th>
-                    <th style={{ textAlign: "left", padding: 10 }}>Actions</th>
+                  <tr style={{ background: "var(--bg-input)" }}>
+                    <th style={{ textAlign: "left", padding: 12 }}>Urządzenie</th>
+                    <th style={{ textAlign: "left", padding: 12 }}>Okno</th>
+                    <th style={{ textAlign: "left", padding: 12 }}>Strefa</th>
+                    <th style={{ textAlign: "left", padding: 12 }}>Wł.</th>
+                    <th style={{ textAlign: "left", padding: 12 }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {sorted.map((it) => (
-                    <tr key={it.windowId} style={{ borderTop: "1px solid #2a2a2a" }}>
-                      <td style={{ padding: 10 }}>
-                        <div style={{ fontWeight: 700 }}>{it.deviceId}</div>
-                        <div style={{ opacity: 0.75 }}>{it.deviceType}</div>
+                    <tr key={it.windowId} style={{ borderTop: "1px solid var(--border)" }}>
+                      <td style={{ padding: 12 }}>
+                        <div style={{ fontWeight: 600 }}>{it.deviceId}</div>
+                        <div style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>{it.deviceType}</div>
                       </td>
-                      <td style={{ padding: 10 }}>{it.from} – {it.to}</td>
-                      <td style={{ padding: 10 }}>{it.timezone}</td>
-                      <td style={{ padding: 10 }}>
-                        <button onClick={() => toggleEnabled(it)} style={{ padding: "6px 10px", cursor: "pointer" }}>
+                      <td style={{ padding: 12 }}>{it.from} – {it.to}</td>
+                      <td style={{ padding: 12 }}>{it.timezone}</td>
+                      <td style={{ padding: 12 }}>
+                        <button onClick={() => toggleEnabled(it)} style={{ padding: "6px 12px" }}>
                           {it.enabled ? "ON" : "OFF"}
                         </button>
                       </td>
-                      <td style={{ padding: 10 }}>
-                        <button onClick={() => remove(it)} style={{ padding: "6px 10px", cursor: "pointer" }}>
-                          Delete
-                        </button>
+                      <td style={{ padding: 12 }}>
+                        <button onClick={() => remove(it)}>Usuń</button>
                       </td>
                     </tr>
                   ))}
                   {sorted.length === 0 && (
                     <tr>
-                      <td colSpan={5} style={{ padding: 12, opacity: 0.7 }}>
-                        No schedules yet.
-                      </td>
+                      <td colSpan={5} style={{ padding: 20, color: "var(--text-muted)" }}>Brak harmonogramów.</td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
           )}
-
-          <div style={{ marginTop: 10, opacity: 0.7, fontSize: 12 }}>
-            windowId is used internally to group START/STOP schedules.
-          </div>
+          <p style={{ marginTop: 10, fontSize: "0.85rem", color: "var(--text-muted)" }}>
+            windowId grupuje harmonogramy START/STOP w backendzie.
+          </p>
         </div>
       </div>
     </div>

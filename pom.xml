@@ -12,6 +12,7 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>backend</module>
         <module>simulators/mqtt-client</module>
     </modules>
 

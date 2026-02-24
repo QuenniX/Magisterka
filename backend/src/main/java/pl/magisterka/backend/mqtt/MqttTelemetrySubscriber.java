@@ -43,7 +43,10 @@ public class MqttTelemetrySubscriber {
         MqttConnectOptions options = new MqttConnectOptions();
         options.setAutomaticReconnect(true);
         options.setCleanSession(true);
-
+        if (props.getUsername() != null && !props.getUsername().isBlank()) {
+            options.setUserName(props.getUsername());
+            if (props.getPassword() != null) options.setPassword(props.getPassword().toCharArray());
+        }
         client.setCallback(new MqttCallback() {
             @Override public void connectionLost(Throwable cause) {
                 log.warn("MQTT connection lost: {}", cause.getMessage());
@@ -63,11 +66,9 @@ public class MqttTelemetrySubscriber {
                     e.setDeviceId(text(n, "deviceId"));
                     e.setDeviceType(text(n, "deviceType"));
 
-                    // payload has ISO-8601 string: "ts":"2026-02-17T14:19:08.085..."
+                    // payload has ISO-8601 string: "ts":"2026-02-17T14:19:08.085..." (czas symulacji z symulatora)
                     String tsStr = text(n, "ts");
-                    if (tsStr != null) {
-                        e.setTs(Instant.parse(tsStr));
-                    }
+                    e.setTs(tsStr != null ? Instant.parse(tsStr) : Instant.now());
 
                     e.setSimTimeMs(longVal(n, "simTimeMs"));
 

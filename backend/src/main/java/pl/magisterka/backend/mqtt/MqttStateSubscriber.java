@@ -39,7 +39,10 @@ public class MqttStateSubscriber {
         MqttConnectOptions options = new MqttConnectOptions();
         options.setAutomaticReconnect(true);
         options.setCleanSession(true);
-
+        if (props.getUsername() != null && !props.getUsername().isBlank()) {
+            options.setUserName(props.getUsername());
+            if (props.getPassword() != null) options.setPassword(props.getPassword().toCharArray());
+        }
         client.setCallback(new MqttCallback() {
             @Override public void connectionLost(Throwable cause) {
                 log.warn("MQTT(state) connection lost: {}", cause.getMessage());

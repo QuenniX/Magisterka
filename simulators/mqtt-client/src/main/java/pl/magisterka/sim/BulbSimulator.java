@@ -44,7 +44,7 @@ public class BulbSimulator implements DeviceSimulator {
     }
 
     @Override
-    public synchronized EnergyTelemetry nextTelemetry(long simTimeMs) {
+    public synchronized EnergyTelemetry nextTelemetry(long simTimeMs, Instant ts) {
 
         double powerW;
         DeviceMode mode;
@@ -61,7 +61,7 @@ public class BulbSimulator implements DeviceSimulator {
         return new EnergyTelemetry(
                 deviceId,
                 deviceType,
-                Instant.now(),
+                ts,
                 simTimeMs,
                 powerW,
                 voltageV,

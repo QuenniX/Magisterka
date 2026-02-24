@@ -1,5 +1,6 @@
 package pl.magisterka.backend.api;
 
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 import pl.magisterka.backend.api.dto.WorkloadDto;
 import pl.magisterka.backend.service.EnergySummaryService;
@@ -38,7 +39,7 @@ public class ExperimentAnalyticsController {
     }
 
     @PostMapping("/compare-run")
-    public Map<String, Object> compareRun(@RequestBody WorkloadDto workload) {
+    public Map<String, Object> compareRun(@Valid @RequestBody WorkloadDto workload) {
         return experimentService.compareRun(workload);
     }
 }

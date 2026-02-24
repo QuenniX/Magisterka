@@ -1,6 +1,8 @@
 package pl.magisterka.backend.api;
 
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
+import pl.magisterka.backend.api.dto.WeeklyPlanBatchRequestDto;
 import pl.magisterka.backend.api.dto.WeeklyPlanCompareRequestDto;
 import pl.magisterka.backend.service.ExperimentService;
 
@@ -17,7 +19,12 @@ public class WeeklyPlanExperimentController {
     }
 
     @PostMapping("/compare-weekly-plan")
-    public Map<String, Object> compareWeeklyPlan(@RequestBody WeeklyPlanCompareRequestDto req) {
+    public Map<String, Object> compareWeeklyPlan(@Valid @RequestBody WeeklyPlanCompareRequestDto req) {
         return experimentService.compareWeeklyPlanRun(req);
+    }
+
+    @PostMapping("/weekly-plan/batch")
+    public Map<String, Object> batchCompareWeeklyPlan(@Valid @RequestBody WeeklyPlanBatchRequestDto req) {
+        return experimentService.batchCompareWeeklyPlanRun(req);
     }
 }

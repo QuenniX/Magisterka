@@ -45,7 +45,7 @@ public class HeaterSimulator implements DeviceSimulator {
     }
 
     @Override
-    public synchronized EnergyTelemetry nextTelemetry(long simTimeMs) {
+    public synchronized EnergyTelemetry nextTelemetry(long simTimeMs, Instant ts) {
 
         double powerW;
 
@@ -55,7 +55,7 @@ public class HeaterSimulator implements DeviceSimulator {
             return new EnergyTelemetry(
                     deviceId,
                     deviceType,
-                    Instant.now(),
+                    ts,
                     simTimeMs,
                     powerW,
                     voltageV,
@@ -69,7 +69,7 @@ public class HeaterSimulator implements DeviceSimulator {
         return new EnergyTelemetry(
                 deviceId,
                 deviceType,
-                Instant.now(),
+                ts,
                 simTimeMs,
                 powerW,
                 voltageV,

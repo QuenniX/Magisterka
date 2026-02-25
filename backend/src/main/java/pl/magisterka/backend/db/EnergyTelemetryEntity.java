@@ -9,7 +9,8 @@ import java.time.Instant;
         name = "energy_telemetry",
         indexes = {
                 @Index(name = "idx_tel_device_ts", columnList = "deviceId, ts"),
-                @Index(name = "idx_tel_device_sim", columnList = "deviceId, simTimeMs")
+                @Index(name = "idx_tel_device_sim", columnList = "deviceId, simTimeMs"),
+                @Index(name = "idx_tel_exp_sim", columnList = "experiment_id, sim_time_ms")
         }
 )
 public class EnergyTelemetryEntity {

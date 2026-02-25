@@ -17,8 +17,13 @@ spring:
           time_zone: UTC
 
 # 1 real second = speedFactor sim seconds (2000 -> ~33 min sim per 1 real sec). Szybsze testy, cele osiągalne w 1-3 min.
+# stepSimMs: fixed sim-time grid for Study 1A analytics (1000–5000 ms). Ensures deterministic, sampling-independent results.
+# maxRunRealSecondsPerPolicy: hard cap per policy run (Manual/Schedule); comparison = 2× this.
 sim:
   speedFactor: 2000
+  stepSimMs: 1000
+  maxRunRealSecondsPerPolicy: 300
+  uiPresets: "90,120,180,300"
 
 # JWT secret (min 256 bits for HS256). Change in production.
 auth:

@@ -21,6 +21,13 @@ public interface EnergyTelemetryRepository extends JpaRepository<EnergyTelemetry
 
     List<EnergyTelemetryEntity> findByDeviceIdAndTsBetweenOrderByTsAsc(String deviceId, Instant from, Instant to);
 
+    /** Tylko rekordy z seedu (schemaName = "seed-forecast"). */
+    List<EnergyTelemetryEntity> findByDeviceIdAndTsBetweenAndSchemaNameOrderByTsAsc(String deviceId, Instant from, Instant to, String schemaName);
+
+    /** Rekordy z pominięciem seedu (MQTT / inne: schemaName IS NULL OR schemaName != 'seed-forecast'). */
+    @Query("SELECT e FROM EnergyTelemetryEntity e WHERE e.deviceId = :deviceId AND e.ts >= :from AND e.ts <= :to AND (e.schemaName IS NULL OR e.schemaName != 'seed-forecast') ORDER BY e.ts ASC")
+    List<EnergyTelemetryEntity> findByDeviceIdAndTsBetweenExcludingSeedOrderByTsAsc(@Param("deviceId") String deviceId, @Param("from") Instant from, @Param("to") Instant to);
+
     List<EnergyTelemetryEntity> findByTsBetweenOrderByDeviceIdAscTsAsc(Instant from, Instant to);
 
     // -------------------------
@@ -71,6 +78,21 @@ public interface EnergyTelemetryRepository extends JpaRepository<EnergyTelemetry
 """, nativeQuery = true)
     long findMaxSimTimeMs(@Param("experimentId") long experimentId);
 
+    /** Min sim_time_ms for experiment; null when no rows. */
+    @Query(value = """
+    select min(sim_time_ms)
+    from energy_telemetry
+    where experiment_id = :experimentId
+""", nativeQuery = true)
+    Long findMinSimTimeMs(@Param("experimentId") long experimentId);
+
+    /** Max sim_time_ms for experiment; null when no rows. */
+    @Query(value = """
+    select max(sim_time_ms)
+    from energy_telemetry
+    where experiment_id = :experimentId
+""", nativeQuery = true)
+    Long findMaxSimTimeMsNullable(@Param("experimentId") long experimentId);
 
     @Query(value = """
     select *

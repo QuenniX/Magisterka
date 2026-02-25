@@ -2,9 +2,11 @@ package pl.magisterka.backend.api;
 
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
+import pl.magisterka.backend.api.dto.RecomputeRequestDto;
 import pl.magisterka.backend.api.dto.WorkloadDto;
 import pl.magisterka.backend.service.EnergySummaryService;
 import pl.magisterka.backend.service.ExperimentService;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -41,5 +43,17 @@ public class ExperimentAnalyticsController {
     @PostMapping("/compare-run")
     public Map<String, Object> compareRun(@Valid @RequestBody WorkloadDto workload) {
         return experimentService.compareRun(workload);
+    }
+
+    /**
+     * Recompute analytics on existing telemetry (no new simulation).
+     * Used by Study 1A to test grid stability (e.g. step 1s vs 5s).
+     */
+    @PostMapping("/{experimentId}/recompute")
+    public Map<String, Object> recompute(
+            @PathVariable("experimentId") long experimentId,
+            @Valid @RequestBody RecomputeRequestDto body) {
+        return energySummaryService.recompute(
+                experimentId, body.fromSimMs, body.toSimMs, body.stepSimMs);
     }
 }

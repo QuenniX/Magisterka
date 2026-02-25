@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class ExperimentService {
@@ -30,6 +31,7 @@ public class ExperimentService {
     private final WeeklyPlanManualRunner weeklyPlanManualRunner;
     private final WeeklyPlanScheduleRunner weeklyPlanScheduleRunner;
     private final int speedFactor;
+    private final int maxRunRealSecondsPerPolicy;
 
     public ExperimentService(
             ExperimentRepository experimentRepository,
@@ -39,7 +41,8 @@ public class ExperimentService {
             SimTimeService simTimeService,
             WeeklyPlanManualRunner weeklyPlanManualRunner,
             WeeklyPlanScheduleRunner weeklyPlanScheduleRunner,
-            @Value("${sim.speedFactor:600}") int speedFactor
+            @Value("${sim.speedFactor:600}") int speedFactor,
+            @Value("${sim.maxRunRealSecondsPerPolicy:300}") int maxRunRealSecondsPerPolicy
     ) {
         this.experimentRepository = experimentRepository;
         this.manualPolicyRunner = manualPolicyRunner;
@@ -49,6 +52,7 @@ public class ExperimentService {
         this.weeklyPlanManualRunner = weeklyPlanManualRunner;
         this.weeklyPlanScheduleRunner = weeklyPlanScheduleRunner;
         this.speedFactor = speedFactor;
+        this.maxRunRealSecondsPerPolicy = maxRunRealSecondsPerPolicy;
     }
 
     public Optional<ExperimentEntity> getActiveExperiment() {
@@ -94,6 +98,10 @@ public class ExperimentService {
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> compareRun(WorkloadDto workload) {
+        if (workload.durationSeconds > maxRunRealSecondsPerPolicy) {
+            throw new IllegalArgumentException(
+                    "durationSeconds (" + workload.durationSeconds + ") exceeds max " + maxRunRealSecondsPerPolicy + " s per policy. Limit real run time for fast tests.");
+        }
 
         ExperimentEntity manual = createExperiment("Compare-MANUAL", ExperimentType.MANUAL, workload.seed);
         ExperimentEntity schedule = createExperiment("Compare-SCHEDULE", ExperimentType.SCHEDULE, workload.seed);
@@ -117,8 +125,12 @@ public class ExperimentService {
             throw new RuntimeException(e);
         }
 
-        Map<String, Object> manualSummary = buildSummary(manual.getId(), manualRes);
-        Map<String, Object> scheduleSummary = buildSummary(schedule.getId(), scheduleRes);
+        Integer stepOverride = workload.stepSimMs;
+        int durationSeconds = workload.durationSeconds;
+        Map<String, Double> targetKwh = workload.devices == null ? Map.of()
+                : workload.devices.stream().collect(Collectors.toMap(d -> d.deviceId, d -> d.targetKwh, (a, b) -> a));
+        Map<String, Object> manualSummary = buildSummary(manual.getId(), manualRes, stepOverride, durationSeconds, targetKwh);
+        Map<String, Object> scheduleSummary = buildSummary(schedule.getId(), scheduleRes, stepOverride, durationSeconds, targetKwh);
 
         Map<String, Object> out = new HashMap<>();
         out.put("manual", manualSummary);
@@ -127,10 +139,10 @@ public class ExperimentService {
         out.put("manualAchieved", manualRes.isAchieved());
         out.put("scheduleAchieved", scheduleRes.isAchieved());
 
-        out.put("manualTimeToAchieveSimMs", manualRes.getEndSimTimeMs());
-        out.put("scheduleTimeToAchieveSimMs", scheduleRes.getEndSimTimeMs());
-        out.put("manualAchievedSimDurationMs", manualRes.getSimDurationMs());
-        out.put("scheduleAchievedSimDurationMs", scheduleRes.getSimDurationMs());
+        out.put("manualTimeToAchieveSimMs", manualRes.getAchievedAtSimTimeMs());
+        out.put("scheduleTimeToAchieveSimMs", scheduleRes.getAchievedAtSimTimeMs());
+        out.put("manualAnalysisWindowSimMs", manualRes.getSummaryEndSimTimeMs() - manualRes.getStartSimTimeMs());
+        out.put("scheduleAnalysisWindowSimMs", scheduleRes.getSummaryEndSimTimeMs() - scheduleRes.getStartSimTimeMs());
 
         Map<String, Object> diffAbs = diffAbs(
                 (Map<String, Object>) manualSummary.get("meta"),
@@ -143,6 +155,12 @@ public class ExperimentService {
 
         out.put("diffAbs", diffAbs);
         out.put("diffPct", diffPct);
+        out.put("manualExperimentId", manual.getId());
+        out.put("scheduleExperimentId", schedule.getId());
+        out.put("manualStartSimMs", manualRes.getStartSimTimeMs());
+        out.put("manualEndSimMs", manualRes.getSummaryEndSimTimeMs());
+        out.put("scheduleStartSimMs", scheduleRes.getStartSimTimeMs());
+        out.put("scheduleEndSimMs", scheduleRes.getSummaryEndSimTimeMs());
         return out;
     }
 
@@ -150,32 +168,45 @@ public class ExperimentService {
         long startReal = System.currentTimeMillis();
         long deadlineReal = startReal + (long) workload.durationSeconds * 1000L;
 
-        long startSim = simTimeService.getCurrentSimTimeMs(experimentId);
+        long timeoutMs = 5000;
+        long startWait = System.currentTimeMillis();
+        Long startSim;
+        do {
+            startSim = simTimeService.getMinSimTimeMs(experimentId);
+            if (startSim != null) break;
+            Thread.sleep(50);
+        } while (System.currentTimeMillis() - startWait < timeoutMs);
+
+        if (startSim == null) {
+            throw new IllegalStateException("No telemetry received after experiment start");
+        }
+
+        Map<String, Double> targetKwh = workload.devices == null ? Map.of()
+                : workload.devices.stream().collect(Collectors.toMap(d -> d.deviceId, d -> d.targetKwh, (a, b) -> a));
 
         while (System.currentTimeMillis() < deadlineReal) {
-
-            Map<String, Double> kwhPerDevice =
-                    energySummaryService.computeKwhPerDeviceForExperiment(experimentId);
-
-            boolean allMet = true;
-            for (var req : workload.devices) {
-                double current = kwhPerDevice.getOrDefault(req.deviceId, 0.0);
-                if (current < req.targetKwh) {
-                    allMet = false;
-                    break;
-                }
+            Long toSimMs = simTimeService.getMaxSimTimeMsNullable(experimentId);
+            if (toSimMs == null || toSimMs <= startSim) {
+                Thread.sleep(200);
+                continue;
             }
+            ExperimentMetricsResult res = energySummaryService.computeExperimentMetricsWithTargets(
+                    experimentId, startSim, toSimMs, targetKwh, workload.stepSimMs);
 
-            if (allMet) {
+            if (res.isAllTargetsAchieved()) {
                 long endSim = simTimeService.getCurrentSimTimeMs(experimentId);
-                return new RunUntilResult(true, startSim, endSim);
+                Long achievedAt = res.getExperimentTimeToAchieveSimMs();
+                return new RunUntilResult(true, startSim, endSim, achievedAt != null ? achievedAt : endSim, null);
             }
 
             Thread.sleep(200);
         }
 
         long endSim = simTimeService.getCurrentSimTimeMs(experimentId);
-        return new RunUntilResult(false, startSim, endSim);
+        ExperimentMetricsResult lastRes = energySummaryService.computeExperimentMetricsWithTargets(
+                experimentId, startSim, endSim, targetKwh, workload.stepSimMs);
+        long effectiveTo = lastRes.getEffectiveToSimMs();
+        return new RunUntilResult(false, startSim, endSim, null, effectiveTo > 0 ? effectiveTo : endSim);
     }
 
     // =========================
@@ -230,8 +261,8 @@ public class ExperimentService {
             throw new RuntimeException(e);
         }
 
-        Map<String, Object> manualSummary = buildSummary(manual.getId(), manualRes);
-        Map<String, Object> scheduleSummary = buildSummary(schedule.getId(), scheduleRes);
+        Map<String, Object> manualSummary = buildSummary(manual.getId(), manualRes, null, (int) effectiveDurationSec, null);
+        Map<String, Object> scheduleSummary = buildSummary(schedule.getId(), scheduleRes, null, (int) effectiveDurationSec, null);
 
         Map<String, Object> out = new HashMap<>();
         out.put("manual", manualSummary);
@@ -372,13 +403,16 @@ public class ExperimentService {
         return experimentRepository.save(e);
     }
 
-    private Map<String, Object> buildSummary(long experimentId, RunUntilResult res) {
+    private Map<String, Object> buildSummary(long experimentId, RunUntilResult res, Integer stepSimMsOverride, int durationSeconds, Map<String, Double> targetKwhPerDevice) {
+        long toSimMs = res.getSummaryEndSimTimeMs();
         Map<String, Object> summary = new HashMap<>();
-        summary.put("meta", energySummaryService.computeExperimentMetaBetweenSim(
-                experimentId, res.getStartSimTimeMs(), res.getEndSimTimeMs()
-        ));
+        Map<String, Object> meta = energySummaryService.computeExperimentMetaBetweenSim(
+                experimentId, res.getStartSimTimeMs(), toSimMs, stepSimMsOverride, durationSeconds, targetKwhPerDevice
+        );
+        meta.put("energyScope", res.isAchieved() ? "UNTIL_TARGET" : "FULL_WINDOW");
+        summary.put("meta", meta);
         summary.put("kwhPerDevice", energySummaryService.computeKwhPerDeviceForExperimentBetweenSim(
-                experimentId, res.getStartSimTimeMs(), res.getEndSimTimeMs()
+                experimentId, res.getStartSimTimeMs(), toSimMs, stepSimMsOverride
         ));
         return summary;
     }

@@ -17,10 +17,14 @@ public class EnergySummaryService {
 
     private final EnergyTelemetryRepository repo;
     private final WeeklyPlanRuleRepository weeklyPlanRuleRepository;
+    private final SimulationAnalyticsEngine analyticsEngine;
 
-    public EnergySummaryService(EnergyTelemetryRepository repo, WeeklyPlanRuleRepository weeklyPlanRuleRepository) {
+    public EnergySummaryService(EnergyTelemetryRepository repo,
+                                WeeklyPlanRuleRepository weeklyPlanRuleRepository,
+                                SimulationAnalyticsEngine analyticsEngine) {
         this.repo = repo;
         this.weeklyPlanRuleRepository = weeklyPlanRuleRepository;
+        this.analyticsEngine = analyticsEngine;
     }
 
     // ---------------------------------------
@@ -124,86 +128,53 @@ public class EnergySummaryService {
     }
 
     // ---------------------------------------
-    // EXPERIMENT (SIM TIME sim_time_ms)
+    // EXPERIMENT (SIM TIME) – Study 1A: fixed grid + sample-and-hold (deterministic)
     // ---------------------------------------
 
     public Map<String, Double> computeKwhPerDeviceForExperiment(long experimentId) {
-        List<EnergyTelemetryEntity> rows =
-                repo.findByExperimentIdOrderByDeviceIdAscSimTimeAsc(experimentId);
-
-        return computeKwhPerDeviceFromRows(rows);
+        var stats = repo.findExperimentStats(experimentId);
+        if (stats == null || stats.getMinSim() == null || stats.getMaxSim() == null) {
+            return new LinkedHashMap<>();
+        }
+        long from = stats.getMinSim();
+        long to = stats.getMaxSim();
+        if (to <= from) return new LinkedHashMap<>();
+        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(experimentId, from, to, null);
+        return res.getKwhPerDevice();
     }
 
     public Map<String, Double> computeKwhPerDeviceForExperimentBetweenSim(long experimentId, long fromSimMs, long toSimMs) {
-        if (toSimMs <= fromSimMs) return new LinkedHashMap<>();
-
-        List<EnergyTelemetryEntity> rows =
-                repo.findByExperimentIdAndSimRangeOrderByDeviceIdAscSimTimeAsc(experimentId, fromSimMs, toSimMs);
-
-        return computeKwhPerDeviceFromRows(rows);
+        return computeKwhPerDeviceForExperimentBetweenSim(experimentId, fromSimMs, toSimMs, null);
     }
 
-    private Map<String, Double> computeKwhPerDeviceFromRows(List<EnergyTelemetryEntity> rows) {
-        Map<String, List<EnergyTelemetryEntity>> byDevice = new LinkedHashMap<>();
-        for (EnergyTelemetryEntity e : rows) {
-            if (e.getDeviceId() == null || e.getSimTimeMs() == null || e.getPowerW() == null) continue;
-            byDevice.computeIfAbsent(e.getDeviceId(), k -> new ArrayList<>()).add(e);
-        }
-
-        Map<String, Double> result = new LinkedHashMap<>();
-        for (var entry : byDevice.entrySet()) {
-            double wh = integrateWhSim(entry.getValue());
-            result.put(entry.getKey(), round(wh / 1000.0, 4));
-        }
-        return result;
+    public Map<String, Double> computeKwhPerDeviceForExperimentBetweenSim(long experimentId, long fromSimMs, long toSimMs, Integer stepSimMsOverride) {
+        if (toSimMs <= fromSimMs) return new LinkedHashMap<>();
+        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(experimentId, fromSimMs, toSimMs, null, stepSimMsOverride);
+        return res.getKwhPerDevice();
     }
 
     public Map<String, Object> computeExperimentMeta(long experimentId) {
         var stats = repo.findExperimentStats(experimentId);
-
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("experimentId", experimentId);
         if (stats == null || stats.getSamples() == null || stats.getSamples() == 0) {
-            out.put("experimentId", experimentId);
             out.put("startSimTimeMs", null);
             out.put("endSimTimeMs", null);
             out.put("durationMs", null);
-            out.put("peakPowerW", 0.0);
+            out.put("peakDevicePowerW", 0.0);
+            out.put("peakTotalPowerW", 0.0);
             out.put("samples", 0L);
+            out.put("totalKwh", 0.0);
+            out.put("avgPowerW", 0.0);
+            out.put("peakToAvgRatio", 0.0);
             return out;
         }
-
-        Long start = stats.getMinSim();
-        Long end = stats.getMaxSim();
-        Long duration = (start != null && end != null) ? (end - start) : null;
-
-        Double peakDevicePower = stats.getPeakDevicePowerW();
-        Double peakTotalPower = stats.getPeakTotalPowerW();
-        Long samples = stats.getSamples();
-
-        double avgPowerW = 0.0;
-        double peakToAvgRatio = 0.0;
-
-        if (duration != null && duration > 0) {
-            double durationHours = duration / 1000.0 / 3600.0;
-
-            Map<String, Double> perDevice = computeKwhPerDeviceForExperiment(experimentId);
-            double totalKwh = perDevice.values().stream().mapToDouble(Double::doubleValue).sum();
-
-            avgPowerW = durationHours > 0 ? (totalKwh * 1000.0 / durationHours) : 0.0;
-            peakToAvgRatio = avgPowerW > 0 ? (peakTotalPower / avgPowerW) : 0.0;
-
-            out.put("totalKwh", round(totalKwh, 4));
-        }
-
-        out.put("experimentId", experimentId);
-        out.put("startSimTimeMs", start);
-        out.put("endSimTimeMs", end);
-        out.put("durationMs", duration);
-        out.put("peakDevicePowerW", peakDevicePower);
-        out.put("peakTotalPowerW", peakTotalPower);
-        out.put("samples", samples);
-        out.put("avgPowerW", round(avgPowerW, 2));
-        out.put("peakToAvgRatio", round(peakToAvgRatio, 2));
+        long fromSimMs = stats.getMinSim();
+        long toSimMs = stats.getMaxSim();
+        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(experimentId, fromSimMs, toSimMs, null);
+        out.put("startSimTimeMs", fromSimMs);
+        out.put("endSimTimeMs", toSimMs);
+        putMetaFromResult(out, res, null);
         return out;
     }
 
@@ -212,83 +183,128 @@ public class EnergySummaryService {
         out.put("experimentId", experimentId);
         out.put("startSimTimeMs", fromSimMs);
         out.put("endSimTimeMs", toSimMs);
-
-        long duration = Math.max(0, toSimMs - fromSimMs);
-        out.put("durationMs", duration);
-
-        List<EnergyTelemetryEntity> rows =
-                repo.findByExperimentIdAndSimRangeOrderByDeviceIdAscSimTimeAsc(experimentId, fromSimMs, toSimMs);
-
-        if (rows.isEmpty()) {
+        if (toSimMs <= fromSimMs) {
+            out.put("durationMs", 0L);
             out.put("samples", 0L);
             out.put("totalKwh", 0.0);
             out.put("peakDevicePowerW", 0.0);
             out.put("peakTotalPowerW", 0.0);
             out.put("avgPowerW", 0.0);
             out.put("peakToAvgRatio", 0.0);
+            out.put("firstSimMsInData", fromSimMs);
+            out.put("lastSimMsInData", toSimMs);
+            out.put("dataRangeWarning", false);
             return out;
         }
-
-        out.put("samples", (long) rows.size());
-
-        double peakDevice = rows.stream()
-                .map(EnergyTelemetryEntity::getPowerW)
-                .filter(Objects::nonNull)
-                .mapToDouble(Double::doubleValue)
-                .max()
-                .orElse(0.0);
-        out.put("peakDevicePowerW", peakDevice);
-
-        Map<Long, Double> sumPerBucket = new HashMap<>();
-        for (EnergyTelemetryEntity e : rows) {
-            if (e.getSimTimeMs() == null || e.getPowerW() == null) continue;
-            long bucket = e.getSimTimeMs() / 1000L;
-            sumPerBucket.merge(bucket, e.getPowerW(), Double::sum);
-        }
-        double peakTotal = sumPerBucket.values().stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
-        out.put("peakTotalPowerW", peakTotal);
-
-        Map<String, Double> perDevice = computeKwhPerDeviceFromRows(rows);
-        double totalKwh = perDevice.values().stream().mapToDouble(Double::doubleValue).sum();
-        out.put("totalKwh", round(totalKwh, 4));
-
-        double avgPowerW = 0.0;
-        if (duration > 0) {
-            double hours = duration / 1000.0 / 3600.0;
-            avgPowerW = hours > 0 ? (totalKwh * 1000.0 / hours) : 0.0;
-        }
-        out.put("avgPowerW", round(avgPowerW, 2));
-
-        double ratio = avgPowerW > 0 ? (peakTotal / avgPowerW) : 0.0;
-        out.put("peakToAvgRatio", round(ratio, 2));
-
+        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(experimentId, fromSimMs, toSimMs, null, null);
+        putMetaFromResult(out, res, null);
         return out;
     }
 
-    private double integrateWhSim(List<EnergyTelemetryEntity> points) {
-        if (points.size() < 2) return 0.0;
-
-        double wh = 0.0;
-
-        for (int i = 1; i < points.size(); i++) {
-            EnergyTelemetryEntity a = points.get(i - 1);
-            EnergyTelemetryEntity b = points.get(i);
-
-            Long t1 = a.getSimTimeMs();
-            Long t2 = b.getSimTimeMs();
-            Double p1 = a.getPowerW();
-            Double p2 = b.getPowerW();
-
-            if (t1 == null || t2 == null || p1 == null || p2 == null) continue;
-            if (t2 <= t1) continue;
-
-            double hours = (t2 - t1) / 3600000.0;
-            double avgW = (p1 + p2) / 2.0;
-
-            wh += avgW * hours;
+    /** Same as above with optional step override and targets (for missingKwhPerDevice in 1A). */
+    public Map<String, Object> computeExperimentMetaBetweenSim(long experimentId, long fromSimMs, long toSimMs, Integer stepSimMsOverride, Integer durationSecondsReal, Map<String, Double> targetKwhPerDevice) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("experimentId", experimentId);
+        out.put("startSimTimeMs", fromSimMs);
+        out.put("endSimTimeMs", toSimMs);
+        if (toSimMs <= fromSimMs) {
+            out.put("durationMs", 0L);
+            out.put("samples", 0L);
+            out.put("totalKwh", 0.0);
+            out.put("peakDevicePowerW", 0.0);
+            out.put("peakTotalPowerW", 0.0);
+            out.put("avgPowerW", 0.0);
+            out.put("peakToAvgRatio", 0.0);
+            out.put("firstSimMsInData", fromSimMs);
+            out.put("lastSimMsInData", toSimMs);
+            out.put("dataRangeWarning", false);
+            out.put("noDataInRange", false);
+            out.put("requestedFromSimMs", fromSimMs);
+            out.put("requestedToSimMs", toSimMs);
+            out.put("effectiveFromSimMs", fromSimMs);
+            out.put("effectiveToSimMs", toSimMs);
+            out.put("analysisWindowSimMs", 0L);
+            if (durationSecondsReal != null) out.put("analysisWindowRealSeconds", durationSecondsReal);
+            return out;
         }
+        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(experimentId, fromSimMs, toSimMs, targetKwhPerDevice, stepSimMsOverride);
+        putMetaFromResult(out, res, durationSecondsReal);
+        return out;
+    }
 
-        return wh;
+    public Map<String, Object> computeExperimentMetaBetweenSim(long experimentId, long fromSimMs, long toSimMs, Integer stepSimMsOverride, Integer durationSecondsReal) {
+        return computeExperimentMetaBetweenSim(experimentId, fromSimMs, toSimMs, stepSimMsOverride, durationSecondsReal, null);
+    }
+
+    public Map<String, Object> computeExperimentMetaBetweenSim(long experimentId, long fromSimMs, long toSimMs, Integer stepSimMsOverride) {
+        return computeExperimentMetaBetweenSim(experimentId, fromSimMs, toSimMs, stepSimMsOverride, null, null);
+    }
+
+    private void putMetaFromResult(Map<String, Object> out, ExperimentMetricsResult res, Integer durationSecondsReal) {
+        out.put("durationMs", res.getDurationMs());
+        out.put("samples", res.getSamples());
+        double peakDevice = res.getPeakDevicePowerW().values().stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
+        out.put("peakDevicePowerW", round(peakDevice, 1));
+        out.put("peakTotalPowerW", round(res.getPeakTotalPowerW(), 1));
+        out.put("totalWh", res.getTotalWh());
+        out.put("totalKwh", round(res.getTotalKwh(), 4));
+        out.put("avgPowerW", round(res.getAvgPowerW(), 1));
+        double peakToAvg = res.getAvgPowerW() > 0 ? res.getPeakTotalPowerW() / res.getAvgPowerW() : 0.0;
+        out.put("peakToAvgRatio", round(peakToAvg, 2));
+        out.put("peakToAvgRatioRaw", peakToAvg);
+        out.put("durationHours", res.getDurationMs() / 3600000.0);
+        out.put("firstSimMsInData", res.getFirstSimMsInData());
+        out.put("lastSimMsInData", res.getLastSimMsInData());
+        out.put("dataRangeWarning", res.isDataRangeWarning());
+        out.put("requestedFromSimMs", res.getRequestedFromSimMs());
+        out.put("requestedToSimMs", res.getRequestedToSimMs());
+        out.put("effectiveFromSimMs", res.getEffectiveFromSimMs());
+        out.put("effectiveToSimMs", res.getEffectiveToSimMs());
+        long startSimMs = res.getEffectiveFromSimMs();
+        out.put("startSimMs", startSimMs);
+        Long achieved = res.getExperimentTimeToAchieveSimMs();
+        out.put("experimentTimeToAchieveSimMs", achieved);
+        out.put("timeToAchieveDeltaSimMs", achieved != null ? achieved - startSimMs : null);
+        out.put("windowDeltaSimMs", res.getAnalysisWindowSimMs());
+        out.put("noDataInRange", res.isNoDataInRange());
+        out.put("diagnosticMessage", res.getDiagnosticMessage());
+        out.put("analysisWindowSimMs", res.getAnalysisWindowSimMs());
+        out.put("missingKwhPerDevice", res.getMissingKwhPerDevice());
+        out.put("gridSteps", res.getGridSteps());
+        out.put("devicesSeen", res.getDevicesSeen());
+        out.put("rowsUsed", res.getRowsUsed());
+        long analysisGridSteps = res.getGridSteps();
+        out.put("analysisGridSteps", analysisGridSteps);
+        if (analysisGridSteps > 500_000) {
+            out.put("analysisWarning", "Duża liczba kroków siatki (" + analysisGridSteps + "). Rozważ zwiększenie kroku analizy (np. 5s), aby przyspieszyć obliczenia.");
+        } else {
+            out.put("analysisWarning", null);
+        }
+        out.put("chartStepSimMs", res.getChartStepSimMs());
+        out.put("chartPoints", res.getChartPoints() != null ? res.getChartPoints() : List.of());
+        if (durationSecondsReal != null) out.put("analysisWindowRealSeconds", durationSecondsReal);
+    }
+
+    /** Exposes the resampling engine for run-until-target (deterministic time-to-achieve). */
+    public ExperimentMetricsResult computeExperimentMetricsWithTargets(
+            long experimentId, long fromSimMs, long toSimMs, Map<String, Double> targetKwhPerDevice, Integer stepSimMsOverride) {
+        return analyticsEngine.computeExperimentMetrics(experimentId, fromSimMs, toSimMs, targetKwhPerDevice, stepSimMsOverride);
+    }
+
+    /**
+     * Recompute analytics on existing telemetry (same experiment, no new simulation).
+     * Returns meta + chartPoints for UI (downsampled, max 5000 points).
+     */
+    public Map<String, Object> recompute(long experimentId, long fromSimMs, long toSimMs, int stepSimMs) {
+        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(
+                experimentId, fromSimMs, toSimMs, null, stepSimMs);
+        Map<String, Object> meta = new LinkedHashMap<>();
+        putMetaFromResult(meta, res, null);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("meta", meta);
+        out.put("chartPoints", res.getChartPoints() != null ? res.getChartPoints() : List.of());
+        out.put("chartStepSimMs", res.getChartStepSimMs());
+        return out;
     }
 
     // ---------------------------------------

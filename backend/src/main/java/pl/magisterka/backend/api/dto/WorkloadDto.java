@@ -7,8 +7,8 @@ public class WorkloadDto {
     public int durationSeconds;      // czas całego runa
     public long seed;                // seed wspólny (albo na start jeden)
     public int powerLimitW = 2000;   // na start default
-
-
+    /** Optional: step sim ms for this run (1000 or 5000). UI "accuracy" toggle. */
+    public Integer stepSimMs;
 
     public List<DeviceRequirementDto> devices;
 

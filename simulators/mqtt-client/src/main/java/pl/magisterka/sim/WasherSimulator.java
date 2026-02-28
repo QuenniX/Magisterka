@@ -69,6 +69,11 @@ public class WasherSimulator implements DeviceSimulator {
         stepStartSimMs = 0;
     }
 
+    /** Reset state for isolated 1B (simulator control/reset). */
+    public synchronized void reset() {
+        stopCycle();
+    }
+
     public synchronized WasherState getWasherState() {
         return washerState;
     }

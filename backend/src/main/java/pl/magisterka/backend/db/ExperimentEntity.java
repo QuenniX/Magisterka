@@ -35,6 +35,10 @@ public class ExperimentEntity {
     @Column(nullable = false)
     private Long seed = 1L;
 
+    /** JSON snapshot of weekly plan rules at experiment start (reproducibility for 1B). */
+    @Column(name = "weekly_plan_snapshot_json", columnDefinition = "TEXT")
+    private String weeklyPlanSnapshotJson;
+
     public Long getSeed() { return seed; }
     public void setSeed(Long seed) { this.seed = seed; }
 
@@ -60,4 +64,7 @@ public class ExperimentEntity {
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+
+    public String getWeeklyPlanSnapshotJson() { return weeklyPlanSnapshotJson; }
+    public void setWeeklyPlanSnapshotJson(String weeklyPlanSnapshotJson) { this.weeklyPlanSnapshotJson = weeklyPlanSnapshotJson; }
 }

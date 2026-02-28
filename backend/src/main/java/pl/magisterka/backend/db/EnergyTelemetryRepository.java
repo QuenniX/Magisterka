@@ -106,4 +106,13 @@ public interface EnergyTelemetryRepository extends JpaRepository<EnergyTelemetry
             @Param("fromSim") long fromSim,
             @Param("toSim") long toSim
     );
+
+    /** Distinct device_id for experiment (debug / 1B transparency). */
+    @Query(value = """
+    select distinct device_id
+    from energy_telemetry
+    where experiment_id = :experimentId
+    order by device_id
+""", nativeQuery = true)
+    List<String> findDistinctDeviceIdsByExperimentId(@Param("experimentId") long experimentId);
 }

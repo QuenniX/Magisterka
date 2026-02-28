@@ -31,6 +31,19 @@ auth:
     secret: magisterka-demo-secret-key-at-least-32-bytes-long-for-hs256
     expirationMs: 86400000  # 24h
 
+# Batch simulation: nominal power in W per deviceId. Missing deviceId → 400 "Missing devicePowerW for X".
+batch:
+  devicePowerW:
+    heater-01: 1750
+    heater-02: 2000
+    bulb-01: 8
+    bulb-02: 12
+    bulb-03: 10
+    plug-01: 1250
+    washer-01: 500
+    fridge-01: 125
+  manualOnProbability: 0.9
+
 mqtt:
   broker: tcp://localhost:1883
   clientIdPrefix: MagisterkaBackend-

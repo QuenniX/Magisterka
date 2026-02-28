@@ -30,6 +30,11 @@ public class HeaterSimulator implements DeviceSimulator {
         state = DeviceState.OFF;
     }
 
+    /** Reset state for isolated 1B (simulator control/reset). */
+    public synchronized void reset() {
+        state = DeviceState.OFF;
+    }
+
     public synchronized DeviceState getState() {
         return state;
     }

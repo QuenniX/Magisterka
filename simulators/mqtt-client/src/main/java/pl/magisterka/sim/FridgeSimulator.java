@@ -20,6 +20,12 @@ public class FridgeSimulator implements DeviceSimulator {
     // czasy cyklu (symulacyjne)
     private long stateUntilSimMs = 0;
 
+    /** Reset state for isolated 1B (simulator control/reset). */
+    public synchronized void reset() {
+        state = DeviceState.OFF;
+        stateUntilSimMs = 0;
+    }
+
     private static final long IDLE_MIN = 30_000;
     private static final long IDLE_MAX = 90_000;
 

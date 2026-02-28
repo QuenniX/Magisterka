@@ -14,7 +14,7 @@ public class PlugSimulator implements DeviceSimulator {
     private final double voltageV;
     private final Random random = new Random();
 
-    private DeviceState state = DeviceState.OFF;
+    private volatile DeviceState state = DeviceState.OFF;
 
     public PlugSimulator(String deviceId, double voltageV) {
         this.deviceId = deviceId;
@@ -29,6 +29,11 @@ public class PlugSimulator implements DeviceSimulator {
     @Override
     public String deviceType() {
         return deviceType;
+    }
+
+    /** Reset state for isolated 1B (simulator control/reset). */
+    public synchronized void reset() {
+        state = DeviceState.OFF;
     }
 
     @Override

@@ -1,6 +1,7 @@
 package pl.magisterka.backend.service;
 
 import org.springframework.stereotype.Service;
+import pl.magisterka.backend.batch.TelemetryPoint;
 import pl.magisterka.backend.db.EnergyTelemetryEntity;
 import pl.magisterka.backend.db.EnergyTelemetryRepository;
 import pl.magisterka.backend.db.WeeklyPlanRuleEntity;
@@ -148,8 +149,13 @@ public class EnergySummaryService {
     }
 
     public Map<String, Double> computeKwhPerDeviceForExperimentBetweenSim(long experimentId, long fromSimMs, long toSimMs, Integer stepSimMsOverride) {
+        return computeKwhPerDeviceForExperimentBetweenSim(experimentId, fromSimMs, toSimMs, stepSimMsOverride, null);
+    }
+
+    /** When allowedDeviceIds is non-null and non-empty, only those devices are included (1B isolated). */
+    public Map<String, Double> computeKwhPerDeviceForExperimentBetweenSim(long experimentId, long fromSimMs, long toSimMs, Integer stepSimMsOverride, Set<String> allowedDeviceIds) {
         if (toSimMs <= fromSimMs) return new LinkedHashMap<>();
-        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(experimentId, fromSimMs, toSimMs, null, stepSimMsOverride);
+        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(experimentId, fromSimMs, toSimMs, null, stepSimMsOverride, allowedDeviceIds);
         return res.getKwhPerDevice();
     }
 
@@ -227,7 +233,40 @@ public class EnergySummaryService {
             if (durationSecondsReal != null) out.put("analysisWindowRealSeconds", durationSecondsReal);
             return out;
         }
-        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(experimentId, fromSimMs, toSimMs, targetKwhPerDevice, stepSimMsOverride);
+        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(experimentId, fromSimMs, toSimMs, targetKwhPerDevice, stepSimMsOverride, null);
+        putMetaFromResult(out, res, durationSecondsReal);
+        return out;
+    }
+
+    /**
+     * Same as above; when allowedDeviceIds is non-null and non-empty, metrics are computed only for those devices (1B isolated: planned devices only).
+     */
+    public Map<String, Object> computeExperimentMetaBetweenSim(long experimentId, long fromSimMs, long toSimMs, Integer stepSimMsOverride, Integer durationSecondsReal, Map<String, Double> targetKwhPerDevice, Set<String> allowedDeviceIds) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("experimentId", experimentId);
+        out.put("startSimTimeMs", fromSimMs);
+        out.put("endSimTimeMs", toSimMs);
+        if (toSimMs <= fromSimMs) {
+            out.put("durationMs", 0L);
+            out.put("samples", 0L);
+            out.put("totalKwh", 0.0);
+            out.put("peakDevicePowerW", 0.0);
+            out.put("peakTotalPowerW", 0.0);
+            out.put("avgPowerW", 0.0);
+            out.put("peakToAvgRatio", 0.0);
+            out.put("firstSimMsInData", fromSimMs);
+            out.put("lastSimMsInData", toSimMs);
+            out.put("dataRangeWarning", false);
+            out.put("noDataInRange", false);
+            out.put("requestedFromSimMs", fromSimMs);
+            out.put("requestedToSimMs", toSimMs);
+            out.put("effectiveFromSimMs", fromSimMs);
+            out.put("effectiveToSimMs", toSimMs);
+            out.put("analysisWindowSimMs", 0L);
+            if (durationSecondsReal != null) out.put("analysisWindowRealSeconds", durationSecondsReal);
+            return out;
+        }
+        ExperimentMetricsResult res = analyticsEngine.computeExperimentMetrics(experimentId, fromSimMs, toSimMs, targetKwhPerDevice, stepSimMsOverride, allowedDeviceIds);
         putMetaFromResult(out, res, durationSecondsReal);
         return out;
     }
@@ -238,6 +277,18 @@ public class EnergySummaryService {
 
     public Map<String, Object> computeExperimentMetaBetweenSim(long experimentId, long fromSimMs, long toSimMs, Integer stepSimMsOverride) {
         return computeExperimentMetaBetweenSim(experimentId, fromSimMs, toSimMs, stepSimMsOverride, null, null);
+    }
+
+    /** Distinct device_id present in telemetry for experiment (for 1B debug transparency). */
+    public List<String> findDistinctDeviceIdsByExperimentId(long experimentId) {
+        return repo.findDistinctDeviceIdsByExperimentId(experimentId);
+    }
+
+    /** Build meta map from analytics result (e.g. for batch mode). */
+    public Map<String, Object> buildMetaFromResult(ExperimentMetricsResult res) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        putMetaFromResult(out, res, null);
+        return out;
     }
 
     private void putMetaFromResult(Map<String, Object> out, ExperimentMetricsResult res, Integer durationSecondsReal) {
@@ -312,10 +363,22 @@ public class EnergySummaryService {
     // ---------------------------------------
 
     public double computeEnergyOutsidePlanKwh(long experimentId, String scenarioId, long fromSim, long toSim) {
+        var rules = weeklyPlanRuleRepository.findByScenarioIdAndEnabledTrue(scenarioId);
+        return computeEnergyOutsidePlanKwh(experimentId, fromSim, toSim, rules);
+    }
+
+    /**
+     * Waste (energy outside plan) for devices that are in the plan only.
+     * Uses provided rules (e.g. snapshot for reproducibility).
+     */
+    public double computeEnergyOutsidePlanKwh(long experimentId, long fromSim, long toSim, List<WeeklyPlanRuleEntity> rules) {
         var rows = repo.findByExperimentIdAndSimRangeOrderByDeviceIdAscSimTimeAsc(experimentId, fromSim, toSim);
         if (rows.isEmpty()) return 0.0;
 
-        var rules = weeklyPlanRuleRepository.findByScenarioIdAndEnabledTrue(scenarioId);
+        Set<String> plannedDeviceIds = rules.stream()
+                .map(WeeklyPlanRuleEntity::getDeviceId)
+                .filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
 
         double wasteWh = 0.0;
 
@@ -324,6 +387,7 @@ public class EnergySummaryService {
             var curr = rows.get(i);
 
             if (!Objects.equals(prev.getDeviceId(), curr.getDeviceId())) continue;
+            if (!plannedDeviceIds.contains(curr.getDeviceId())) continue;
 
             long t1 = nz(prev.getSimTimeMs());
             long t2 = nz(curr.getSimTimeMs());
@@ -339,10 +403,49 @@ public class EnergySummaryService {
             boolean inside = isInsideWeeklyPlan(curr.getDeviceId(), mid, rules);
 
             if (!inside) wasteWh += energyWh;
-
-
         }
 
+        return wasteWh / 1000.0;
+    }
+
+    /**
+     * Waste (energy outside plan) from in-memory batch telemetry. Planned devices only; same logic as DB version.
+     */
+    public double computeWasteFromTelemetry(List<TelemetryPoint> telemetry, List<WeeklyPlanRuleEntity> rules) {
+        if (telemetry == null || telemetry.isEmpty() || rules == null) return 0.0;
+
+        Set<String> plannedDeviceIds = rules.stream()
+                .map(WeeklyPlanRuleEntity::getDeviceId)
+                .filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+
+        Map<String, List<TelemetryPoint>> byDevice = new LinkedHashMap<>();
+        for (TelemetryPoint p : telemetry) {
+            if (p.deviceId() == null) continue;
+            byDevice.computeIfAbsent(p.deviceId(), k -> new ArrayList<>()).add(p);
+        }
+        for (List<TelemetryPoint> list : byDevice.values()) {
+            list.sort(Comparator.comparingLong(TelemetryPoint::simTimeMs));
+        }
+
+        double wasteWh = 0.0;
+        for (String deviceId : plannedDeviceIds) {
+            List<TelemetryPoint> pts = byDevice.get(deviceId);
+            if (pts == null || pts.size() < 2) continue;
+            for (int i = 1; i < pts.size(); i++) {
+                TelemetryPoint prev = pts.get(i - 1);
+                TelemetryPoint curr = pts.get(i);
+                long t1 = prev.simTimeMs();
+                long t2 = curr.simTimeMs();
+                if (t2 <= t1) continue;
+                double p1 = prev.powerW();
+                double p2 = curr.powerW();
+                double dtHours = (t2 - t1) / 3600000.0;
+                double energyWh = ((p1 + p2) / 2.0) * dtHours;
+                long mid = (t1 + t2) / 2;
+                if (!isInsideWeeklyPlan(deviceId, mid, rules)) wasteWh += energyWh;
+            }
+        }
         return wasteWh / 1000.0;
     }
 

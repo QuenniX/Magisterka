@@ -7,10 +7,12 @@ import pl.magisterka.model.DeviceCommand;
 import pl.magisterka.model.DeviceStateMessage;
 import pl.magisterka.mqtt.MqttCommandSubscriber;
 import pl.magisterka.mqtt.MqttTelemetryPublisher;
+import pl.magisterka.mqtt.SimControlResetSubscriber;
 import pl.magisterka.sim.*;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 public class MqttPublisher {
@@ -42,7 +44,7 @@ public class MqttPublisher {
 
     public static void main(String[] args) throws Exception {
         long speedFactor = 2000; // 1s real = 2000s sim (~33 min). Testy krótkie, cele kWh osiągalne w 1-3 min.
-        SimClock clock = SimClock.start(speedFactor);
+        AtomicReference<SimClock> clockRef = new AtomicReference<>(SimClock.start(speedFactor));
         Instant simStart = computeSimStart();
         System.out.println("Sim start (ts base): " + simStart + " (use SIM_START_DAYS_AGO=30 for 30-day reference data)");
 
@@ -79,7 +81,7 @@ public class MqttPublisher {
             // --- KOMENDY MQTT dla pralki ---
             String washerCmdTopic = cmdTopic(washer);
             cmdSub.subscribe(washerCmdTopic, cmd -> {
-                long nowSim = clock.nowMs();
+                long nowSim = clockRef.get().nowMs();
                 Instant ts = simStart.plusMillis(nowSim);
                 try {
                     if (cmd == DeviceCommand.START) {
@@ -99,7 +101,7 @@ public class MqttPublisher {
             // --- KOMENDY MQTT dla heatera ---
             String heaterCmdTopic = cmdTopic(heater);
             cmdSub.subscribe(heaterCmdTopic, cmd -> {
-                long nowSim = clock.nowMs();
+                long nowSim = clockRef.get().nowMs();
                 Instant ts = simStart.plusMillis(nowSim);
                 try {
                     if (cmd == DeviceCommand.START) {
@@ -118,7 +120,7 @@ public class MqttPublisher {
 
             // --- KOMENDY MQTT dla bulb-01 ---
             cmdSub.subscribe(cmdTopic(bulb), cmd -> {
-                long nowSim = clock.nowMs();
+                long nowSim = clockRef.get().nowMs();
                 Instant ts = simStart.plusMillis(nowSim);
                 try {
                     if (cmd == DeviceCommand.START) {
@@ -137,7 +139,7 @@ public class MqttPublisher {
 
             // --- KOMENDY MQTT dla bulb-02 ---
             cmdSub.subscribe(cmdTopic(bulb2), cmd -> {
-                long nowSim = clock.nowMs();
+                long nowSim = clockRef.get().nowMs();
                 Instant ts = simStart.plusMillis(nowSim);
                 try {
                     if (cmd == DeviceCommand.START) {
@@ -156,7 +158,7 @@ public class MqttPublisher {
 
             // --- KOMENDY MQTT dla bulb-03 ---
             cmdSub.subscribe(cmdTopic(bulb3), cmd -> {
-                long nowSim = clock.nowMs();
+                long nowSim = clockRef.get().nowMs();
                 Instant ts = simStart.plusMillis(nowSim);
                 try {
                     if (cmd == DeviceCommand.START) {
@@ -176,7 +178,7 @@ public class MqttPublisher {
             // --- KOMENDY MQTT dla heater-02 ---
             String heater2CmdTopic = cmdTopic(heater2);
             cmdSub.subscribe(heater2CmdTopic, cmd -> {
-                long nowSim = clock.nowMs();
+                long nowSim = clockRef.get().nowMs();
                 Instant ts = simStart.plusMillis(nowSim);
                 try {
                     if (cmd == DeviceCommand.START) {
@@ -197,6 +199,22 @@ public class MqttPublisher {
             throw new RuntimeException("Failed to subscribe to MQTT cmd topics", e);
         }
 
+        // --- SIM CONTROL: reset (isolated 1B) ---
+        Runnable resetAction = () -> {
+            heater.reset();
+            heater2.reset();
+            washer.reset();
+            bulb.reset();
+            bulb2.reset();
+            bulb3.reset();
+            plug.reset();
+            fridge.reset();
+            clockRef.set(clockRef.get().reset());
+        };
+        SimControlResetSubscriber resetSub = new SimControlResetSubscriber(client, publisher, resetAction);
+        resetSub.subscribe();
+        System.out.println("Subscribed to " + SimControlResetSubscriber.TOPIC_RESET + " (isolated 1B)");
+
         // publish initial retained states (ts = simStart + 0)
         Instant ts0 = simStart;
         publishDeviceState(publisher, stateSerializer, bulb, ts0, 0, bulb.getState().name(), null);
@@ -207,17 +225,17 @@ public class MqttPublisher {
         publishWasherState(publisher, stateSerializer, washer, ts0, 0);
 
         // --- TELEMETRIA ---
-        startWasherLoop("washer-01", publisher, stateSerializer, washer, 2000, clock, simStart);
-        startLoop("bulb-01", publisher, telemetryTopic(bulb), bulb, 2000, clock, simStart);
-        startLoop("bulb-02", publisher, telemetryTopic(bulb2), bulb2, 1500, clock, simStart);
-        startLoop("bulb-03", publisher, telemetryTopic(bulb3), bulb3, 1800, clock, simStart);
+        startWasherLoop("washer-01", publisher, stateSerializer, washer, 2000, clockRef, simStart);
+        startLoop("bulb-01", publisher, telemetryTopic(bulb), bulb, 2000, clockRef, simStart);
+        startLoop("bulb-02", publisher, telemetryTopic(bulb2), bulb2, 1500, clockRef, simStart);
+        startLoop("bulb-03", publisher, telemetryTopic(bulb3), bulb3, 1800, clockRef, simStart);
 
-        startStateLoop("plug-01", publisher, stateSerializer, plug, 3000, clock, simStart, s -> s);
-        startStateLoop("fridge-01", publisher, stateSerializer, fridge, 2000, clock, simStart,
+        startStateLoop("plug-01", publisher, stateSerializer, plug, 3000, clockRef, simStart, s -> s);
+        startStateLoop("fridge-01", publisher, stateSerializer, fridge, 2000, clockRef, simStart,
                 raw -> raw.equals("ON") ? "COOLING" : "IDLE");
-        startStateLoop("heater-01", publisher, stateSerializer, heater, 2000, clock, simStart,
+        startStateLoop("heater-01", publisher, stateSerializer, heater, 2000, clockRef, simStart,
                 raw -> raw.equals("ON") ? "HEATING" : "OFF");
-        startStateLoop("heater-02", publisher, stateSerializer, heater2, 2000, clock, simStart,
+        startStateLoop("heater-02", publisher, stateSerializer, heater2, 2000, clockRef, simStart,
                 raw -> raw.equals("ON") ? "HEATING" : "OFF");
 
         Thread.currentThread().join();
@@ -274,14 +292,14 @@ public class MqttPublisher {
             String topic,
             DeviceSimulator sim,
             long intervalMs,
-            SimClock clock,
+            AtomicReference<SimClock> clockRef,
             Instant simStart
     ) {
         Thread t = new Thread(() -> {
             long counter = 0;
             while (true) {
                 try {
-                    long simTime = clock.nowMs();
+                    long simTime = clockRef.get().nowMs();
                     Instant ts = simStart.plusMillis(simTime);
                     publisher.publish(topic, sim.nextTelemetry(simTime, ts));
                     counter++;
@@ -310,14 +328,14 @@ public class MqttPublisher {
             DeviceStateJsonSerializer stateSerializer,
             WasherSimulator washer,
             long intervalMs,
-            SimClock clock,
+            AtomicReference<SimClock> clockRef,
             Instant simStart
     ) {
         Thread t = new Thread(() -> {
             long counter = 0;
             while (true) {
                 try {
-                    long simTime = clock.nowMs();
+                    long simTime = clockRef.get().nowMs();
                     Instant ts = simStart.plusMillis(simTime);
 
                     String before = washer.getCurrentPhaseName();
@@ -358,7 +376,7 @@ public class MqttPublisher {
             DeviceStateJsonSerializer stateSerializer,
             DeviceSimulator sim,
             long intervalMs,
-            SimClock clock,
+            AtomicReference<SimClock> clockRef,
             Instant simStart,
             Function<String, String> stateMapper
     ) {
@@ -368,7 +386,7 @@ public class MqttPublisher {
 
             while (true) {
                 try {
-                    long simTime = clock.nowMs();
+                    long simTime = clockRef.get().nowMs();
                     Instant ts = simStart.plusMillis(simTime);
 
                     var tel = sim.nextTelemetry(simTime, ts);

@@ -1,20 +1,31 @@
 package pl.magisterka.backend.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pl.magisterka.backend.api.dto.WorkloadDto;
 import pl.magisterka.backend.api.dto.WeeklyPlanBatchRequestDto;
 import pl.magisterka.backend.api.dto.WeeklyPlanCompareRequestDto;
+import pl.magisterka.backend.batch.SimulationEngine;
+import pl.magisterka.backend.batch.SimulationPolicy;
+import pl.magisterka.backend.batch.SimulationResult;
+import pl.magisterka.backend.batch.spec.ConfigDeviceSpecProvider;
 import pl.magisterka.backend.db.ExperimentEntity;
 import pl.magisterka.backend.db.ExperimentRepository;
+import pl.magisterka.backend.db.WeeklyPlanRuleEntity;
+import pl.magisterka.backend.db.WeeklyPlanRuleRepository;
 import pl.magisterka.backend.model.ExperimentType;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -23,6 +34,9 @@ public class ExperimentService {
     /** Safety buffer (real seconds) added to min duration so sim has time to complete. */
     private static final int DURATION_BUFFER_SEC = 30;
 
+    /** Isolated 1B only: multiply speed factor so real-time timeout is shorter (same sim duration). */
+    private static final int ISOLATED_SPEED_MULTIPLIER = 4;
+
     private final ExperimentRepository experimentRepository;
     private final ManualPolicyRunner manualPolicyRunner;
     private final SchedulePolicyRunner schedulePolicyRunner;
@@ -30,8 +44,16 @@ public class ExperimentService {
     private final SimTimeService simTimeService;
     private final WeeklyPlanManualRunner weeklyPlanManualRunner;
     private final WeeklyPlanScheduleRunner weeklyPlanScheduleRunner;
+    private final SimulatorResetService simulatorResetService;
+    private final WeeklyPlanRuleRepository weeklyPlanRuleRepository;
+    private final ObjectMapper objectMapper;
+    private final SimulationEngine simulationEngine;
+    private final SimulationAnalyticsEngine simulationAnalyticsEngine;
+    private final ConfigDeviceSpecProvider configDeviceSpecProvider;
     private final int speedFactor;
     private final int maxRunRealSecondsPerPolicy;
+
+    private static final int BATCH_MAX_POINTS = 500_000;
 
     public ExperimentService(
             ExperimentRepository experimentRepository,
@@ -41,6 +63,12 @@ public class ExperimentService {
             SimTimeService simTimeService,
             WeeklyPlanManualRunner weeklyPlanManualRunner,
             WeeklyPlanScheduleRunner weeklyPlanScheduleRunner,
+            SimulatorResetService simulatorResetService,
+            WeeklyPlanRuleRepository weeklyPlanRuleRepository,
+            ObjectMapper objectMapper,
+            SimulationEngine simulationEngine,
+            SimulationAnalyticsEngine simulationAnalyticsEngine,
+            ConfigDeviceSpecProvider configDeviceSpecProvider,
             @Value("${sim.speedFactor:600}") int speedFactor,
             @Value("${sim.maxRunRealSecondsPerPolicy:300}") int maxRunRealSecondsPerPolicy
     ) {
@@ -51,6 +79,12 @@ public class ExperimentService {
         this.simTimeService = simTimeService;
         this.weeklyPlanManualRunner = weeklyPlanManualRunner;
         this.weeklyPlanScheduleRunner = weeklyPlanScheduleRunner;
+        this.simulatorResetService = simulatorResetService;
+        this.weeklyPlanRuleRepository = weeklyPlanRuleRepository;
+        this.objectMapper = objectMapper;
+        this.simulationEngine = simulationEngine;
+        this.simulationAnalyticsEngine = simulationAnalyticsEngine;
+        this.configDeviceSpecProvider = configDeviceSpecProvider;
         this.speedFactor = speedFactor;
         this.maxRunRealSecondsPerPolicy = maxRunRealSecondsPerPolicy;
     }
@@ -314,6 +348,236 @@ public class ExperimentService {
     }
 
     /**
+     * Isolated 1B: Manual and Schedule each run from sim 0..T after simulator reset.
+     * Same seed, scenarioId, weeks; metrics on identical window [0, T]. No change to legacy compareWeeklyPlanRun.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> compareWeeklyPlanRunIsolated(WeeklyPlanCompareRequestDto req) {
+        if (req == null || req.scenarioId == null || req.scenarioId.isBlank()) {
+            throw new IllegalArgumentException("scenarioId required");
+        }
+
+        int weeks = req.weeks <= 0 ? 4 : req.weeks;
+        long simDurationMs = weeks * 7L * 24L * 60L * 60L * 1000L;
+        int effectiveSpeedFactor = speedFactor * ISOLATED_SPEED_MULTIPLIER;
+        long minDurationSec = computeMinRealDurationSec(weeks, effectiveSpeedFactor);
+        long effectiveDurationSec = req.durationSeconds < minDurationSec
+                ? minDurationSec + DURATION_BUFFER_SEC
+                : req.durationSeconds;
+
+        stopAllRunnersAndDeactivate();
+
+        // --- Manual: reset -> run 0..T ---
+        simulatorResetService.resetAndAwaitAck(Duration.ofSeconds(15));
+
+        ExperimentEntity manual = createExperiment("WEEKLY_PLAN_MANUAL", ExperimentType.MANUAL, req.seed);
+        List<WeeklyPlanRuleEntity> rulesManual = weeklyPlanRuleRepository.findByScenarioIdAndEnabledTrue(req.scenarioId);
+        try {
+            manual.setWeeklyPlanSnapshotJson(objectMapper.writeValueAsString(rulesManual));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize weekly plan snapshot", e);
+        }
+        experimentRepository.save(manual);
+
+        manual.setActive(true);
+        experimentRepository.save(manual);
+        weeklyPlanManualRunner.start(manual, req.scenarioId);
+        RunUntilResult manualRes;
+        try {
+            manualRes = runForSimDurationOrTimeout(manual.getId(), simDurationMs, effectiveDurationSec);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            weeklyPlanManualRunner.stop();
+            manual.setActive(false);
+            experimentRepository.save(manual);
+            throw new RuntimeException(e);
+        }
+        weeklyPlanManualRunner.stop();
+        manual.setActive(false);
+        experimentRepository.save(manual);
+
+        // --- Schedule: reset -> run 0..T ---
+        simulatorResetService.resetAndAwaitAck(Duration.ofSeconds(15));
+
+        ExperimentEntity schedule = createExperiment("WEEKLY_PLAN_SCHEDULE", ExperimentType.SCHEDULE, req.seed);
+        List<WeeklyPlanRuleEntity> rulesSchedule = weeklyPlanRuleRepository.findByScenarioIdAndEnabledTrue(req.scenarioId);
+        try {
+            schedule.setWeeklyPlanSnapshotJson(objectMapper.writeValueAsString(rulesSchedule));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize weekly plan snapshot", e);
+        }
+        experimentRepository.save(schedule);
+
+        schedule.setActive(true);
+        experimentRepository.save(schedule);
+        weeklyPlanScheduleRunner.start(schedule, req.scenarioId);
+        RunUntilResult scheduleRes;
+        try {
+            scheduleRes = runForSimDurationOrTimeout(schedule.getId(), simDurationMs, effectiveDurationSec);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            weeklyPlanScheduleRunner.stop();
+            schedule.setActive(false);
+            experimentRepository.save(schedule);
+            throw new RuntimeException(e);
+        }
+        weeklyPlanScheduleRunner.stop();
+        schedule.setActive(false);
+        experimentRepository.save(schedule);
+
+        Set<String> plannedDeviceIds = new LinkedHashSet<>(buildPlannedDeviceIds(rulesManual));
+        Map<String, Object> manualSummary = buildSummaryForWeeklyPlan(manual.getId(), manualRes, null, (int) effectiveDurationSec, plannedDeviceIds);
+        Map<String, Object> scheduleSummary = buildSummaryForWeeklyPlan(schedule.getId(), scheduleRes, null, (int) effectiveDurationSec, plannedDeviceIds);
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("manual", manualSummary);
+        out.put("schedule", scheduleSummary);
+        out.put("manualSimDurationMs", manualRes.getSimDurationMs());
+        out.put("scheduleSimDurationMs", scheduleRes.getSimDurationMs());
+        out.put("weeks", weeks);
+        out.put("scenarioId", req.scenarioId);
+        out.put("isolated", true);
+
+        Map<String, Object> debug = new HashMap<>();
+        debug.put("plannedDeviceIds", new ArrayList<>(plannedDeviceIds));
+        debug.put("telemetryDeviceIdsManual", energySummaryService.findDistinctDeviceIdsByExperimentId(manual.getId()));
+        debug.put("telemetryDeviceIdsSchedule", energySummaryService.findDistinctDeviceIdsByExperimentId(schedule.getId()));
+        Map<String, Double> manualKwh = (Map<String, Double>) manualSummary.get("kwhPerDevice");
+        Map<String, Double> scheduleKwh = (Map<String, Double>) scheduleSummary.get("kwhPerDevice");
+        debug.put("usedDeviceIdsManual", manualKwh != null ? new ArrayList<>(manualKwh.keySet()) : List.of());
+        debug.put("usedDeviceIdsSchedule", scheduleKwh != null ? new ArrayList<>(scheduleKwh.keySet()) : List.of());
+        out.put("debug", debug);
+
+        Map<String, Object> diffAbs = diffAbs(
+                (Map<String, Object>) manualSummary.get("meta"),
+                (Map<String, Object>) scheduleSummary.get("meta")
+        );
+        Map<String, Object> diffPct = diffPct(
+                (Map<String, Object>) manualSummary.get("meta"),
+                (Map<String, Object>) scheduleSummary.get("meta")
+        );
+        out.put("diffAbs", diffAbs);
+        out.put("diffPct", diffPct);
+
+        List<WeeklyPlanRuleEntity> manualRulesForWaste = parseSnapshotRules(manual.getWeeklyPlanSnapshotJson());
+        List<WeeklyPlanRuleEntity> scheduleRulesForWaste = parseSnapshotRules(schedule.getWeeklyPlanSnapshotJson());
+        double manualWaste = energySummaryService.computeEnergyOutsidePlanKwh(
+                manual.getId(), manualRes.getStartSimTimeMs(), manualRes.getEndSimTimeMs(),
+                manualRulesForWaste != null ? manualRulesForWaste : rulesManual
+        );
+        double scheduleWaste = energySummaryService.computeEnergyOutsidePlanKwh(
+                schedule.getId(), scheduleRes.getStartSimTimeMs(), scheduleRes.getEndSimTimeMs(),
+                scheduleRulesForWaste != null ? scheduleRulesForWaste : rulesSchedule
+        );
+
+        ((Map<String, Object>) manualSummary.get("meta")).put("wasteKwh", round4(manualWaste));
+        ((Map<String, Object>) scheduleSummary.get("meta")).put("wasteKwh", round4(scheduleWaste));
+        diffAbs.put("wasteKwh", round4(scheduleWaste - manualWaste));
+        diffPct.put("wasteKwh", round2(pct(scheduleWaste, manualWaste)));
+
+        return out;
+    }
+
+    private List<WeeklyPlanRuleEntity> parseSnapshotRules(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() {});
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Batch 1B: in-memory simulation, no MQTT, no DB. Adaptive step (≤500k points).
+     * Returns usedBatchStepMs, deviceCount, plannedDeviceIds for UI "Advanced".
+     */
+    public Map<String, Object> compareWeeklyPlanRunBatch(WeeklyPlanCompareRequestDto req) {
+        if (req == null || req.scenarioId == null || req.scenarioId.isBlank()) {
+            throw new IllegalArgumentException("scenarioId required");
+        }
+        int weeks = req.weeks <= 0 ? 4 : req.weeks;
+        long simDurationMs = weeks * 7L * 24L * 60L * 60L * 1000L;
+        List<WeeklyPlanRuleEntity> rules = weeklyPlanRuleRepository.findByScenarioIdAndEnabledTrue(req.scenarioId);
+
+        List<String> plannedDeviceIds = buildPlannedDeviceIds(rules);
+        int deviceCount = plannedDeviceIds.size();
+        if (deviceCount == 0) {
+            throw new IllegalArgumentException("No enabled rules for scenario; add at least one rule with a device.");
+        }
+        int usedBatchStepMs = computeAdaptiveBatchStepMs(weeks, simDurationMs, deviceCount);
+
+        SimulationResult manualResult = simulationEngine.runBatchSimulation(
+                simDurationMs, usedBatchStepMs, rules, req.seed, SimulationPolicy.MANUAL);
+        SimulationResult scheduleResult = simulationEngine.runBatchSimulation(
+                simDurationMs, usedBatchStepMs, rules, req.seed, SimulationPolicy.SCHEDULE);
+
+        var manualMetrics = simulationAnalyticsEngine.computeMetricsFromTelemetry(
+                manualResult.telemetry(), 0L, simDurationMs, usedBatchStepMs);
+        var scheduleMetrics = simulationAnalyticsEngine.computeMetricsFromTelemetry(
+                scheduleResult.telemetry(), 0L, simDurationMs, usedBatchStepMs);
+
+        Map<String, Object> manualMeta = energySummaryService.buildMetaFromResult(manualMetrics);
+        Map<String, Object> scheduleMeta = energySummaryService.buildMetaFromResult(scheduleMetrics);
+
+        double manualWaste = energySummaryService.computeWasteFromTelemetry(manualResult.telemetry(), rules);
+        double scheduleWaste = energySummaryService.computeWasteFromTelemetry(scheduleResult.telemetry(), rules);
+        manualMeta.put("wasteKwh", round4(manualWaste));
+        scheduleMeta.put("wasteKwh", round4(scheduleWaste));
+
+        Map<String, Object> manualSummary = new HashMap<>();
+        manualSummary.put("meta", manualMeta);
+        manualSummary.put("kwhPerDevice", manualMetrics.getKwhPerDevice());
+        Map<String, Object> scheduleSummary = new HashMap<>();
+        scheduleSummary.put("meta", scheduleMeta);
+        scheduleSummary.put("kwhPerDevice", scheduleMetrics.getKwhPerDevice());
+
+        Map<String, Object> diffAbs = diffAbs(manualMeta, scheduleMeta);
+        Map<String, Object> diffPct = diffPct(manualMeta, scheduleMeta);
+        diffAbs.put("wasteKwh", round4(scheduleWaste - manualWaste));
+        diffPct.put("wasteKwh", round2(pct(scheduleWaste, manualWaste)));
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("manual", manualSummary);
+        out.put("schedule", scheduleSummary);
+        out.put("manualSimDurationMs", simDurationMs);
+        out.put("scheduleSimDurationMs", simDurationMs);
+        out.put("weeks", weeks);
+        out.put("scenarioId", req.scenarioId);
+        out.put("batch", true);
+        out.put("usedBatchStepMs", usedBatchStepMs);
+        out.put("deviceCount", deviceCount);
+        out.put("plannedDeviceIds", plannedDeviceIds);
+        out.put("manualOnProbability", configDeviceSpecProvider.getManualOnProbability());
+        out.put("diffAbs", diffAbs);
+        out.put("diffPct", diffPct);
+        return out;
+    }
+
+    private List<String> buildPlannedDeviceIds(List<WeeklyPlanRuleEntity> rules) {
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        if (rules != null) {
+            for (WeeklyPlanRuleEntity r : rules) {
+                if (r.isEnabled() && r.getDeviceId() != null) ids.add(r.getDeviceId());
+            }
+        }
+        return new ArrayList<>(ids);
+    }
+
+    /** ≤4 tyg: 5s, ≤12 tyg: 10s, else 60s; cap so total points ≤ BATCH_MAX_POINTS. */
+    private static int computeAdaptiveBatchStepMs(int weeks, long simDurationMs, int deviceCount) {
+        int minStep = weeks <= 4 ? 5_000 : (weeks <= 12 ? 10_000 : 60_000);
+        long maxSteps = BATCH_MAX_POINTS / Math.max(1, deviceCount);
+        if (maxSteps <= 0) return minStep;
+        long stepFromLimit = simDurationMs / maxSteps;
+        int stepMs = (int) Math.max(minStep, stepFromLimit);
+        if (stepMs < 5_000) stepMs = 5_000;
+        else if (stepMs < 10_000) stepMs = 5_000;
+        else if (stepMs < 60_000) stepMs = 10_000;
+        else stepMs = 60_000;
+        return stepMs;
+    }
+
+    /**
      * Runs compareWeeklyPlanRun N times (e.g. N=20) with varying seeds for stable statistics.
      */
     public Map<String, Object> batchCompareWeeklyPlanRun(WeeklyPlanBatchRequestDto batchReq) {
@@ -413,6 +677,21 @@ public class ExperimentService {
         summary.put("meta", meta);
         summary.put("kwhPerDevice", energySummaryService.computeKwhPerDeviceForExperimentBetweenSim(
                 experimentId, res.getStartSimTimeMs(), toSimMs, stepSimMsOverride
+        ));
+        return summary;
+    }
+
+    /** 1B isolated: metrics and kwhPerDevice only for planned devices. */
+    private Map<String, Object> buildSummaryForWeeklyPlan(long experimentId, RunUntilResult res, Integer stepSimMsOverride, int durationSeconds, Set<String> plannedDeviceIds) {
+        long toSimMs = res.getSummaryEndSimTimeMs();
+        Map<String, Object> summary = new HashMap<>();
+        Map<String, Object> meta = energySummaryService.computeExperimentMetaBetweenSim(
+                experimentId, res.getStartSimTimeMs(), toSimMs, stepSimMsOverride, durationSeconds, null, plannedDeviceIds
+        );
+        meta.put("energyScope", res.isAchieved() ? "UNTIL_TARGET" : "FULL_WINDOW");
+        summary.put("meta", meta);
+        summary.put("kwhPerDevice", energySummaryService.computeKwhPerDeviceForExperimentBetweenSim(
+                experimentId, res.getStartSimTimeMs(), toSimMs, stepSimMsOverride, plannedDeviceIds
         ));
         return summary;
     }

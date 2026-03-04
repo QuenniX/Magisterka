@@ -147,10 +147,13 @@ public class ExperimentService {
         RunUntilResult scheduleRes;
 
         try {
+            // 1A methodology: both runs start from identical simulator state (time=0, devices OFF).
+            simulatorResetService.resetAndAwaitAck(Duration.ofSeconds(15));
             start(manual.getId());
             manualRes = runUntilTargetsOrTimeout(manual.getId(), workload);
             stopActive();
 
+            simulatorResetService.resetAndAwaitAck(Duration.ofSeconds(15));
             start(schedule.getId());
             scheduleRes = runUntilTargetsOrTimeout(schedule.getId(), workload);
             stopActive();

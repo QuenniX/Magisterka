@@ -60,8 +60,8 @@ public class MqttTelemetrySubscriber {
 
                     EnergyTelemetryEntity e = new EnergyTelemetryEntity();
 
-                    // payload: "schema" -> entity: schemaName
-                    e.setSchemaName(text(n, "schema"));
+                    // Master thesis version: all realtime telemetry has schema_name = 'mqtt'.
+                    e.setSchemaName("mqtt");
 
                     e.setDeviceId(text(n, "deviceId"));
                     e.setDeviceType(text(n, "deviceType"));

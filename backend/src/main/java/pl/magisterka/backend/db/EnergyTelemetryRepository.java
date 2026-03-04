@@ -30,6 +30,18 @@ public interface EnergyTelemetryRepository extends JpaRepository<EnergyTelemetry
 
     List<EnergyTelemetryEntity> findByTsBetweenOrderByDeviceIdAscTsAsc(Instant from, Instant to);
 
+    /** Rekordy w zakresie czasu dla danego schema_name (np. "mqtt") – wszystkie urządzenia, ORDER BY device_id, ts. */
+    @Query("SELECT e FROM EnergyTelemetryEntity e WHERE e.ts >= :from AND e.ts <= :to AND e.schemaName = :schemaName ORDER BY e.deviceId ASC, e.ts ASC")
+    List<EnergyTelemetryEntity> findByTsBetweenAndSchemaNameOrderByDeviceIdAscTsAsc(@Param("from") Instant from, @Param("to") Instant to, @Param("schemaName") String schemaName);
+
+    /** Diagnostyka: liczba rekordów wg device_id. */
+    @Query("SELECT e.deviceId, COUNT(e) FROM EnergyTelemetryEntity e GROUP BY e.deviceId")
+    List<Object[]> countByDeviceId();
+
+    /** Diagnostyka: min i max ts w tabeli. */
+    @Query("SELECT MIN(e.ts), MAX(e.ts) FROM EnergyTelemetryEntity e")
+    List<Object[]> findMinMaxTs();
+
     // -------------------------
     // EXPERIMENT QUERIES (SIM TIME)
     // -------------------------

@@ -6,9 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend
 } from "recharts";
 import { computeEnergyPerHour } from "../metrics/energyMetrics";
-
-
-const API_BASE = "http://localhost:8080";
+import { apiFetch } from "../api/http";
 
 function fmt(n: number | null, digits = 2) {
   if (n === null || !Number.isFinite(n)) return "-";
@@ -59,12 +57,14 @@ export default function DeviceComparePage() {
   );
 
   async function fetchTelemetry(fromLocal: string, toLocal: string) {
-    const url = new URL(`${API_BASE}/api/telemetry/range`);
-    url.searchParams.set("deviceId", deviceId!);
-    url.searchParams.set("from", new Date(fromLocal).toISOString());
-    url.searchParams.set("to", new Date(toLocal).toISOString());
+    const params = new URLSearchParams();
+    params.set("deviceId", deviceId!);
+    params.set("from", new Date(fromLocal).toISOString());
+    params.set("to", new Date(toLocal).toISOString());
 
-    const res = await fetch(url.toString());
+    const res = await apiFetch(`/api/telemetry/range?${params.toString()}`, {
+      cache: "no-store",
+    });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`Telemetry failed: ${res.status} ${res.statusText} ${text}`);

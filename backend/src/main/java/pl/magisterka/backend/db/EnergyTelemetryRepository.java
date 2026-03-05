@@ -12,10 +12,25 @@ public interface EnergyTelemetryRepository extends JpaRepository<EnergyTelemetry
 
     Optional<EnergyTelemetryEntity> findTopByDeviceIdOrderByTsDesc(String deviceId);
 
+    /**
+     * Latest MQTT telemetry for given device, ordered by ingestion time (receivedAt) with NULLS LAST,
+     * and ts as a secondary tiebreaker.
+     */
+    @Query(value = """
+        select *
+        from energy_telemetry
+        where device_id = :deviceId
+          and schema_name = 'mqtt'
+        order by received_at desc nulls last, ts desc
+        limit 1
+    """, nativeQuery = true)
+    Optional<EnergyTelemetryEntity> findLatestMqttByDevice(@Param("deviceId") String deviceId);
+
     @Query(value = """
         select distinct on (device_id) *
         from energy_telemetry
-        order by device_id, ts desc
+        where schema_name = 'mqtt'
+        order by device_id, received_at desc nulls last, ts desc
     """, nativeQuery = true)
     List<EnergyTelemetryEntity> findLatestTelemetryPerDevice();
 

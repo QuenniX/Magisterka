@@ -1,6 +1,7 @@
 import type { TimeWindow, CreateTimeWindowRequest } from "../types/TimeWindow";
+import { API_BASE } from "./config";
 
-const BASE_URL = "http://localhost:8080/api/time-windows";
+const BASE_URL = `${API_BASE}/api/time-windows`;
 
 async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const res = await fetch(input, init);

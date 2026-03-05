@@ -31,7 +31,9 @@ public class TelemetryController {
     // GET /api/telemetry/latest?deviceId=plug-01
     @GetMapping(value = "/latest", params = "deviceId")
     public LatestTelemetryDto latestOne(@RequestParam String deviceId) {
-        EnergyTelemetryEntity e = repo.findTopByDeviceIdOrderByTsDesc(deviceId)
+        // Prefer latest MQTT by ingestion time (receivedAt) with NULLS LAST; fall back to legacy ts-based lookup.
+        EnergyTelemetryEntity e = repo.findLatestMqttByDevice(deviceId)
+                .or(() -> repo.findTopByDeviceIdOrderByTsDesc(deviceId))
                 .orElseThrow(() -> new IllegalArgumentException("No telemetry for deviceId=" + deviceId));
         return toDto(e);
     }

@@ -31,7 +31,7 @@ type EnergyDailyDto = {
   days: any;
 };
 
-const API_BASE = "http://localhost:8080";
+import { apiFetch } from "../api/http";
 
 type RangeKey = "15m" | "1h" | "24h";
 
@@ -256,12 +256,14 @@ export default function DeviceDetailsPage() {
       setError(null);
 
       const { from, to } = getWindow();
-      const url = new URL(`${API_BASE}/api/telemetry/range`);
-      url.searchParams.set("deviceId", deviceId);
-      url.searchParams.set("from", from.toISOString());
-      url.searchParams.set("to", to.toISOString());
+      const params = new URLSearchParams();
+      params.set("deviceId", deviceId);
+      params.set("from", from.toISOString());
+      params.set("to", to.toISOString());
 
-      const res = await fetch(url.toString());
+      const res = await apiFetch(`/api/telemetry/range?${params.toString()}`, {
+        cache: "no-store",
+      });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(`Telemetry failed: ${res.status} ${res.statusText} ${text}`);
@@ -281,12 +283,14 @@ export default function DeviceDetailsPage() {
       setEnergyError(null);
 
       const { from, to } = getWindow();
-      const url = new URL(`${API_BASE}/api/energy/daily`);
-      url.searchParams.set("deviceId", deviceId);
-      url.searchParams.set("from", from.toISOString());
-      url.searchParams.set("to", to.toISOString());
+      const params = new URLSearchParams();
+      params.set("deviceId", deviceId);
+      params.set("from", from.toISOString());
+      params.set("to", to.toISOString());
 
-      const res = await fetch(url.toString());
+      const res = await apiFetch(`/api/energy/daily?${params.toString()}`, {
+        cache: "no-store",
+      });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(`Energy failed: ${res.status} ${res.statusText} ${text}`);

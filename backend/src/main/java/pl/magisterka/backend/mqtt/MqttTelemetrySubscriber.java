@@ -70,6 +70,9 @@ public class MqttTelemetrySubscriber {
                     String tsStr = text(n, "ts");
                     e.setTs(tsStr != null ? Instant.parse(tsStr) : Instant.now());
 
+                    // Real ingestion time (wall clock) – basis for \"latest\" MQTT by received order.
+                    e.setReceivedAt(Instant.now());
+
                     e.setSimTimeMs(longVal(n, "simTimeMs"));
 
                     e.setPowerW(doubleVal(n, "powerW"));

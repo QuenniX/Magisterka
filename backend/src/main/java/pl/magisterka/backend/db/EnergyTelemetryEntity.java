@@ -27,6 +27,13 @@ public class EnergyTelemetryEntity {
     private Instant ts;
     private Long simTimeMs;
 
+    /**
+     * Real time when telemetry was ingested by backend.
+     * Used for \"latest\" queries to avoid relying on simulated ts,
+     * which can move backwards after simulator resets.
+     */
+    private Instant receivedAt;
+
     private Double powerW;
     private Double voltageV;
 
@@ -48,6 +55,9 @@ public class EnergyTelemetryEntity {
 
     public Instant getTs() { return ts; }
     public void setTs(Instant ts) { this.ts = ts; }
+
+    public Instant getReceivedAt() { return receivedAt; }
+    public void setReceivedAt(Instant receivedAt) { this.receivedAt = receivedAt; }
 
     public Long getSimTimeMs() { return simTimeMs; }
     public void setSimTimeMs(Long simTimeMs) { this.simTimeMs = simTimeMs; }

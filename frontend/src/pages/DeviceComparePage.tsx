@@ -7,17 +7,11 @@ import {
 } from "recharts";
 import { computeEnergyPerHour } from "../metrics/energyMetrics";
 import { apiFetch } from "../api/http";
+import { formatPowerW, formatEnergyKWh } from "../utils/formatPower";
+import { deviceTypeLabel } from "../utils/labels";
 
-function fmt(n: number | null, digits = 2) {
-  if (n === null || !Number.isFinite(n)) return "-";
-  return n.toFixed(digits);
-}
-function fmtKwh(n: number | null) {
-  if (n === null || !Number.isFinite(n)) return "-";
-  return n.toFixed(4);
-}
 function fmtPct(n: number | null) {
-  if (n === null || !Number.isFinite(n)) return "-";
+  if (n === null || !Number.isFinite(n)) return "—";
   return `${n.toFixed(1)}%`;
 }
 
@@ -25,6 +19,7 @@ type Row = {
   key: "totalEnergyKwh" | "averagePowerW" | "peakPower" | "activeSeconds" | "activePct";
   label: string;
   render: (v: number | null) => string;
+  bold?: boolean;
 };
 
 export default function DeviceComparePage() {
@@ -47,11 +42,11 @@ export default function DeviceComparePage() {
 
   const rows: Row[] = useMemo(
     () => [
-      { key: "totalEnergyKwh", label: "Total Energy (kWh)", render: fmtKwh },
-      { key: "averagePowerW", label: "Average Power (W)", render: (v) => fmt(v, 2) },
-      { key: "peakPower", label: "Peak Power (W)", render: (v) => fmt(v, 2) },
-      { key: "activeSeconds", label: "Active Time (s)", render: (v) => (v === null ? "-" : String(Math.round(v))) },
-      { key: "activePct", label: "Active %", render: fmtPct },
+      { key: "totalEnergyKwh", label: "Energia całkowita (kWh)", render: (v) => formatEnergyKWh(v), bold: true },
+      { key: "averagePowerW", label: "Średnia moc (W)", render: (v) => (v == null ? "—" : formatPowerW(v)), bold: true },
+      { key: "peakPower", label: "Szczyt mocy (W)", render: (v) => (v == null ? "—" : formatPowerW(v)), bold: true },
+      { key: "activeSeconds", label: "Czas aktywny (s)", render: (v) => (v === null ? "—" : String(Math.round(v))) },
+      { key: "activePct", label: "Aktywność (%)", render: fmtPct },
     ],
     []
   );
@@ -201,166 +196,112 @@ function setPreset(ms: number) {
 
 
   return (
-    <div style={{ padding: 20, fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ padding: 20, fontFamily: "system-ui, sans-serif", maxWidth: 960, margin: "0 auto" }}>
       <button
         onClick={() => navigate(`/devices/${deviceType}/${deviceId}`)}
-        style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid gray", cursor: "pointer" }}
+        style={{ padding: "8px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", cursor: "pointer", marginBottom: 16 }}
       >
-        ← Back
+        ← Wstecz
       </button>
 
-      <h2 style={{ marginBottom: 4 }}>Compare ranges</h2>
-      <div style={{ opacity: 0.8, marginBottom: 12 }}>
-        Device: <b>{deviceId}</b> • Type: <b>{deviceType}</b>
+      <h2 style={{ margin: "0 0 4px", fontSize: "1.25rem" }}>Porównaj zakresy</h2>
+      <div style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: 16 }}>
+        Urządzenie: <b>{deviceId}</b> ({deviceTypeLabel(deviceType)})
       </div>
 
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ border: "1px solid gray", borderRadius: 10, padding: 12 }}>
-          <b>Range A</b>
-          <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-            <label>
-              From:
-              <input
-                style={{ marginLeft: 8 }}
-                type="datetime-local"
-                value={aFrom}
-                onChange={(e) => setAFrom(e.target.value)}
-              />
-            </label>
-            <label>
-              To:
-              <input
-                style={{ marginLeft: 26 }}
-                type="datetime-local"
-                value={aTo}
-                onChange={(e) => setATo(e.target.value)}
-              />
-            </label>
-          </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16, marginBottom: 16 }}>
+        <div className="app-card" style={{ padding: 16 }}>
+          <b style={{ display: "block", marginBottom: 10 }}>Zakres A</b>
+          <label style={{ display: "block", marginBottom: 8, fontSize: "0.9rem" }}>
+            Od: <input type="datetime-local" value={aFrom} onChange={(e) => setAFrom(e.target.value)} style={{ marginLeft: 8, padding: "6px 8px" }} />
+          </label>
+          <label style={{ display: "block", fontSize: "0.9rem" }}>
+            Do: <input type="datetime-local" value={aTo} onChange={(e) => setATo(e.target.value)} style={{ marginLeft: 10, padding: "6px 8px" }} />
+          </label>
         </div>
-
-        <div style={{ border: "1px solid gray", borderRadius: 10, padding: 12 }}>
-          <b>Range B</b>
-          <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-            <label>
-              From:
-              <input
-                style={{ marginLeft: 8 }}
-                type="datetime-local"
-                value={bFrom}
-                onChange={(e) => setBFrom(e.target.value)}
-              />
-            </label>
-            <label>
-              To:
-              <input
-                style={{ marginLeft: 26 }}
-                type="datetime-local"
-                value={bTo}
-                onChange={(e) => setBTo(e.target.value)}
-              />
-            </label>
-          </div>
+        <div className="app-card" style={{ padding: 16 }}>
+          <b style={{ display: "block", marginBottom: 10 }}>Zakres B</b>
+          <label style={{ display: "block", marginBottom: 8, fontSize: "0.9rem" }}>
+            Od: <input type="datetime-local" value={bFrom} onChange={(e) => setBFrom(e.target.value)} style={{ marginLeft: 8, padding: "6px 8px" }} />
+          </label>
+          <label style={{ display: "block", fontSize: "0.9rem" }}>
+            Do: <input type="datetime-local" value={bTo} onChange={(e) => setBTo(e.target.value)} style={{ marginLeft: 10, padding: "6px 8px" }} />
+          </label>
         </div>
       </div>
 
-      <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }}>
-        <button
-          onClick={doCompare}
-          disabled={loading}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 8,
-            border: "1px solid gray",
-            cursor: loading ? "not-allowed" : "pointer",
-          }}
-        >
-          {loading ? "Comparing..." : "Compare"}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <button onClick={doCompare} disabled={loading} className="primary" style={{ padding: "10px 20px" }}>
+          {loading ? "Porównuję…" : "Porównaj"}
         </button>
-        {err && <span style={{ color: "#b00020" }}>{err}</span>}
+        <span style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>Presety:</span>
+        <button onClick={() => setPreset(60 * 60 * 1000)} style={{ padding: "8px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", cursor: "pointer" }}>
+          Ostatnia 1h vs poprzednia 1h
+        </button>
+        <button onClick={() => setPreset(24 * 60 * 60 * 1000)} style={{ padding: "8px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", cursor: "pointer" }}>
+          Ostatnie 24h vs poprzednie 24h
+        </button>
+        {err && <span style={{ color: "var(--danger)" }}>{err}</span>}
       </div>
-        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ opacity: 0.8 }}>Presets:</span>
-
-          <button
-            onClick={() => setPreset(60 * 60 * 1000)}
-            style={{ padding: "6px 10px", borderRadius: 999, border: "1px solid gray", cursor: "pointer" }}
-          >
-            Last 1h vs Prev 1h
-          </button>
-
-          <button
-            onClick={() => setPreset(24 * 60 * 60 * 1000)}
-            style={{ padding: "6px 10px", borderRadius: 999, border: "1px solid gray", cursor: "pointer" }}
-          >
-            Last 24h vs Prev 24h
-          </button>
-        </div>
 
       {aMetrics && bMetrics ? (
-        <div style={{ marginTop: 16, maxWidth: 900 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "2px solid gray", padding: "8px 6px" }}>Metric</th>
-                <th style={{ textAlign: "left", borderBottom: "2px solid gray", padding: "8px 6px" }}>A</th>
-                <th style={{ textAlign: "left", borderBottom: "2px solid gray", padding: "8px 6px" }}>B</th>
-                <th style={{ textAlign: "left", borderBottom: "2px solid gray", padding: "8px 6px" }}>Δ (B-A)</th>
-                <th style={{ textAlign: "left", borderBottom: "2px solid gray", padding: "8px 6px" }}>Δ% vs A</th>
-              </tr>
-            </thead>
-
-
-
-            <tbody>
-              {rows.map((r) => {
-                const a = aMetrics[r.key] as number | null;
-                const b = bMetrics[r.key] as number | null;
-
-                const diff = a === null || b === null ? null : b - a;
-                const pct = a === null || b === null || a === 0 ? null : (diff! / a) * 100;
-
-                return (
-                  <tr key={r.key}>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #ddd" }}>{r.label}</td>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #ddd" }}>{r.render(a)}</td>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #ddd" }}>{r.render(b)}</td>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #ddd" }}>{r.render(diff)}</td>
-                    <td style={{ padding: "8px 6px", borderBottom: "1px solid #ddd" }}>{fmtPct(pct)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          <div style={{ marginTop: 10, opacity: 0.75, fontSize: 13 }}>
-            Total energy liczone trapezami z telemetry. To jest spójne A vs B.
+        <>
+          <div className="app-card" style={{ padding: 16, marginBottom: 20 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", borderBottom: "2px solid var(--border)", padding: "10px 8px" }}>Metryka</th>
+                  <th style={{ textAlign: "left", borderBottom: "2px solid var(--border)", padding: "10px 8px" }}>A</th>
+                  <th style={{ textAlign: "left", borderBottom: "2px solid var(--border)", padding: "10px 8px" }}>B</th>
+                  <th style={{ textAlign: "left", borderBottom: "2px solid var(--border)", padding: "10px 8px" }}>Różnica (B−A)</th>
+                  <th style={{ textAlign: "left", borderBottom: "2px solid var(--border)", padding: "10px 8px" }}>Zmiana % vs A</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const a = aMetrics[r.key] as number | null;
+                  const b = bMetrics[r.key] as number | null;
+                  const diff = a === null || b === null ? null : b - a;
+                  const pct = a === null || b === null || a === 0 ? null : (diff! / a) * 100;
+                  return (
+                    <tr key={r.key}>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)", fontWeight: r.bold ? 600 : 400 }}>{r.label}</td>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>{r.render(a)}</td>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>{r.render(b)}</td>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>{r.render(diff)}</td>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>{fmtPct(pct)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{ marginTop: 12, fontSize: "0.85rem", color: "var(--text-muted)" }}>
+              Energia liczona trapezami z telemetrii. Spójne dla A i B.
+            </div>
           </div>
 
           {hourly.length > 0 && (
-            <div style={{ marginTop: 18, maxWidth: 900 }}>
-              <h3 style={{ margin: "0 0 6px 0" }}>Energy per hour (kWh/h)</h3>
-              <div style={{ opacity: 0.85, marginBottom: 8 }}>
-                Peak hour A: <b>{peakHourA.toFixed(4)}</b> kWh • Peak hour B: <b>{peakHourB.toFixed(4)}</b> kWh
+            <div className="app-card" style={{ padding: 16 }}>
+              <h3 style={{ margin: "0 0 8px", fontSize: "1rem" }}>Energia na godzinę (kWh/h)</h3>
+              <div style={{ marginBottom: 12, fontSize: "0.9rem", color: "var(--text-muted)" }}>
+                Szczyt godziny A: <b>{formatEnergyKWh(peakHourA)}</b> · B: <b>{formatEnergyKWh(peakHourB)}</b>
               </div>
-
-              <div style={{ height: 280, border: "1px solid #333", borderRadius: 10, padding: 10 }}>
+              <div style={{ height: 280 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={hourly}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="label" />
                     <YAxis tickFormatter={(v) => Number(v).toFixed(3)} />
-                    <Tooltip formatter={(v: any) => `${Number(v).toFixed(4)} kWh`} />
+                    <Tooltip formatter={(v: unknown) => `${Number(v).toFixed(4)} kWh`} />
                     <Legend />
-                    <Bar dataKey="kwhA" name="A" />
-                    <Bar dataKey="kwhB" name="B" />
+                    <Bar dataKey="kwhA" name="Zakres A" fill="var(--accent)" />
+                    <Bar dataKey="kwhB" name="Zakres B" fill="var(--success)" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
           )}
-
-        </div>
+        </>
       ) : null}
     </div>
   );

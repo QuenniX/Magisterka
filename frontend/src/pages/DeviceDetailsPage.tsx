@@ -32,6 +32,8 @@ type EnergyDailyDto = {
 };
 
 import { apiFetch } from "../api/http";
+import { formatPowerW, formatEnergyKWh, formatDuration, formatTsAgo } from "../utils/formatPower";
+import { deviceTypeLabel, stateLabel } from "../utils/labels";
 
 type RangeKey = "15m" | "1h" | "24h";
 
@@ -83,18 +85,7 @@ function safeSumEnergy(days: any): number {
   return Number(days) || 0;
 }
 
-const ACTIVE_THRESHOLD_W = 1; // startowo: 1W (możesz potem wystawić w UI)
-
-function formatDuration(totalSeconds: number) {
-  const s = Math.max(0, Math.floor(totalSeconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-
-  if (h > 0) return `${h}h ${m}m ${sec}s`;
-  if (m > 0) return `${m}m ${sec}s`;
-  return `${sec}s`;
-}
+const ACTIVE_THRESHOLD_W = 1;
 
 function calculateRangeMetrics(points: TelemetryPoint[], thresholdW: number) {
   if (!points || points.length < 2) {
@@ -236,13 +227,6 @@ export default function DeviceDetailsPage() {
 
   const [energyKwh, setEnergyKwh] = useState<number | null>(null);
   const [energyError, setEnergyError] = useState<string | null>(null);
-  const fmtPct = (n: number | null) =>
-    n === null ? "-" : Number.isFinite(n) ? `${n.toFixed(1)}%` : "-";
-
-  const fmt = (n: number) => (Number.isFinite(n) ? n.toFixed(2) : "-");
-  const fmtKwh = (n: number | null) =>
-    n === null ? "-" : Number.isFinite(n) ? n.toFixed(4) : "-";
-
   const getWindow = () => {
     const now = new Date();
     const from = new Date(now.getTime() - rangeToMs(range));
@@ -363,71 +347,71 @@ export default function DeviceDetailsPage() {
     );
 
 
+  const lastTsAgo = last ? formatTsAgo(last.ts).ago : "—";
+  const rangeLabels: Record<RangeKey, string> = { "15m": "15 min", "1h": "1 h", "24h": "24 h" };
+
   return (
-    <div style={{ padding: "20px", fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ padding: 20, fontFamily: "system-ui, sans-serif", maxWidth: 1200, margin: "0 auto" }}>
       <button
         onClick={() => navigate("/devices")}
-        style={{
-          padding: "8px 12px",
-          borderRadius: "8px",
-          border: "1px solid gray",
-          cursor: "pointer",
-        }}
+        style={{ padding: "8px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", cursor: "pointer", marginBottom: 16 }}
       >
-        ← Back
+        ← Wstecz
       </button>
 
-      <div style={{ marginTop: "12px" }}>
-        <h1 style={{ margin: 0 }}>{deviceId}</h1>
-        <div style={{ opacity: 0.8 }}>
-          Type: <b>{deviceType}</b>
-        </div>
-
-        <div style={{ opacity: 0.85, marginTop: "6px" }}>
-          Range: <b>{range}</b> • Peak: <b>{fmt(peakPower)}</b> W
-          {last && (
-            <>
-              {" "}
-              • Current: <b>{fmt(last.powerW)}</b> W • State: <b>{last.state}</b>
-            </>
-          )}
-          {" "}
-          • Avg: <b>{metrics.averagePowerW === null ? "-" : fmt(metrics.averagePowerW)}</b> W
-          {" "}
-          • Active: <b>{formatDuration(metrics.activeSeconds)}</b>
-          {" "}
-          (<b>{fmtPct(metrics.activePct)}</b>)
-          {" "}
-          • Energy: <b>{fmtKwh(energyKwh)}</b> kWh
-        </div>
-          </div>
-        <button
-          onClick={() => navigate(`/devices/${deviceType}/${deviceId}/compare`)}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>{deviceId}</h1>
+        <span
           style={{
-            marginTop: "10px",
-            padding: "8px 12px",
-            borderRadius: "8px",
-            border: "1px solid gray",
-            cursor: "pointer",
+            padding: "6px 12px",
+            borderRadius: 999,
+            fontSize: "0.85rem",
+            fontWeight: 600,
+            background: last?.state?.toUpperCase() === "ON" ? "rgba(63,185,80,0.2)" : "rgba(248,81,73,0.2)",
+            color: last?.state?.toUpperCase() === "ON" ? "var(--success)" : "var(--danger)",
           }}
         >
-          Compare ranges
-        </button>
-
-
-
-
-      {/* Controls */}
-      <div
-        style={{
-          marginTop: "12px",
-          display: "flex",
-          gap: "10px",
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
+          {stateLabel(last?.state)}
+        </span>
+      </div>
+      <div style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: 4 }}>
+        Typ: {deviceTypeLabel(deviceType)}
+      </div>
+      <div style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+        Ostatnia telemetria: {lastTsAgo}
+      </div>
+      <button
+        onClick={() => navigate(`/devices/${deviceType}/${deviceId}/compare`)}
+        style={{ marginTop: 12, padding: "8px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", cursor: "pointer" }}
       >
-        <span style={{ opacity: 0.8 }}>Range:</span>
+        Porównaj zakresy
+      </button>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12, marginTop: 24, marginBottom: 20 }}>
+        <div className="app-card" style={{ padding: 12 }}>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 4 }}>Moc teraz</div>
+          <div style={{ fontWeight: 700 }}>{formatPowerW(last?.powerW)}</div>
+        </div>
+        <div className="app-card" style={{ padding: 12 }}>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 4 }}>Średnia (zakres)</div>
+          <div style={{ fontWeight: 700 }}>{formatPowerW(metrics.averagePowerW)}</div>
+        </div>
+        <div className="app-card" style={{ padding: 12 }}>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 4 }}>Szczyt (zakres)</div>
+          <div style={{ fontWeight: 700 }}>{formatPowerW(peakPower)}</div>
+        </div>
+        <div className="app-card" style={{ padding: 12 }}>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 4 }}>Energia (zakres)</div>
+          <div style={{ fontWeight: 700 }}>{formatEnergyKWh(energyKwh)}</div>
+        </div>
+        <div className="app-card" style={{ padding: 12 }}>
+          <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: 4 }}>Czas aktywny</div>
+          <div style={{ fontWeight: 700 }}>{formatDuration(metrics.activeSeconds)}</div>
+        </div>
+      </div>
+
+      <div className="app-card" style={{ padding: "12px 16px", marginBottom: 16, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+        <span style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>Zakres:</span>
 
         {(["15m", "1h", "24h"] as RangeKey[]).map((r) => (
           <button
@@ -442,69 +426,29 @@ export default function DeviceDetailsPage() {
               fontWeight: range === r ? 700 : 400,
             }}
           >
-            {r}
+            {r === "15m" ? "15 min" : r === "1h" ? "1 h" : "24 h"}
           </button>
         ))}
 
-        <span style={{ marginLeft: "10px", opacity: 0.8 }}>Live:</span>
-        <button
-          onClick={() => setLive((v) => !v)}
-          style={{
-            padding: "6px 10px",
-            borderRadius: "999px",
-            border: "1px solid gray",
-            cursor: "pointer",
-            fontWeight: 700,
-          }}
-        >
-          {live ? "Pause" : "Resume"}
+        <span style={{ marginLeft: 8, fontSize: "0.9rem", color: "var(--text-muted)" }}>Na żywo:</span>
+        <button onClick={() => setLive((v) => !v)} style={{ padding: "6px 12px", borderRadius: 999, border: "1px solid var(--border)", cursor: "pointer", fontWeight: 600 }}>
+          {live ? "Pauza" : "Włącz"}
         </button>
-
-        <button
-          onClick={() => {
-            fetchTelemetryRange();
-            fetchEnergy();
-          }}
-          style={{
-            padding: "6px 10px",
-            borderRadius: "999px",
-            border: "1px solid gray",
-            cursor: "pointer",
-          }}
-        >
-          Refresh now
+        <button onClick={() => { fetchTelemetryRange(); fetchEnergy(); }} style={{ padding: "6px 12px", borderRadius: 999, border: "1px solid var(--border)", cursor: "pointer" }}>
+          Odśwież
         </button>
       </div>
 
       {error && (
-        <div
-          style={{
-            border: "1px solid #a00",
-            padding: "10px",
-            marginTop: "12px",
-            borderRadius: "8px",
-          }}
-        >
-          <b>Error:</b> {error}
+        <div className="app-card" style={{ padding: 12, marginBottom: 16, borderColor: "var(--danger)", background: "rgba(248,81,73,0.08)" }}>
+          <b>Błąd:</b> {error}
         </div>
       )}
 
-      <div
-        style={{
-          marginTop: "16px",
-          border: "1px solid gray",
-          borderRadius: "10px",
-          padding: "12px",
-          height: "360px",
-          maxWidth: "1000px",
-        }}
-      >
-        <h3 style={{ marginTop: 0 }}>Power (W)</h3>
-
+      <div className="app-card" style={{ padding: 16, marginBottom: 20, height: 360 }}>
+        <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Moc</h3>
         {chartData.length === 0 ? (
-          <div style={{ opacity: 0.8 }}>
-            Brak danych w zakresie. Zmień range albo uruchom symulator.
-          </div>
+          <div style={{ color: "var(--text-muted)" }}>Brak danych w zakresie. Zmień zakres albo uruchom symulator.</div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData}>
@@ -517,16 +461,8 @@ export default function DeviceDetailsPage() {
           </ResponsiveContainer>
         )}
       </div>
-      <div
-        style={{
-          marginTop: "25px",
-          border: "1px solid gray",
-          borderRadius: "10px",
-          padding: "12px",
-          maxWidth: "1000px",
-        }}
-      >
-        <h3 style={{ marginTop: 0 }}>Energy per hour (kWh)</h3>
+      <div className="app-card" style={{ padding: 16 }}>
+        <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Energia na godzinę</h3>
 
         {hourly.length === 0 ? (
           <div style={{ opacity: 0.8 }}>
@@ -534,12 +470,10 @@ export default function DeviceDetailsPage() {
           </div>
         ) : (
           <>
-            <div style={{ opacity: 0.85, marginBottom: "8px" }}>
-              Total (from buckets): <b>{fmtKwh(hourlyTotal)}</b> kWh • Peak hour:{" "}
-              <b>{fmtKwh(hourlyPeak)}</b> kWh
+            <div style={{ marginBottom: 12, fontSize: "0.9rem", color: "var(--text-muted)" }}>
+              Suma: <b>{formatEnergyKWh(hourlyTotal)}</b> · Szczyt godziny: <b>{formatEnergyKWh(hourlyPeak)}</b>
             </div>
-
-            <div style={{ height: "260px" }}>
+            <div style={{ height: 260 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hourly}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -550,7 +484,7 @@ export default function DeviceDetailsPage() {
                       `${Number(value).toFixed(4)} kWh`
                     }
                   />
-                  <Bar dataKey="kwh" fill="#60a5fa" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="kwh" fill="var(--accent)" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -559,8 +493,8 @@ export default function DeviceDetailsPage() {
 
       </div>
 
-      <div style={{ marginTop: "10px", opacity: 0.8 }}>
-        Tip: 15m/1h do testów “live”, 24h do porównań i raportów.
+      <div style={{ marginTop: 12, fontSize: "0.85rem", color: "var(--text-muted)" }}>
+        15 min / 1 h do testów na żywo, 24 h do “live”, porównań i raportów.
       </div>
     </div>
   );
